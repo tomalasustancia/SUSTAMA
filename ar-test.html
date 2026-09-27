@@ -3,12 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>SUSTAMA AR — Clon Oficial W3C</title>
+    <title>SUSTAMA AR — Cubo 3D Funcional</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: transparent; font-family: monospace; }
         #overlay { position: fixed; inset: 0; z-index: 10; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; padding: 30px; }
         .btn { pointer-events: auto; background: #b5f23d; color: black; border: none; font-weight: bold; padding: 16px 24px; border-radius: 8px; font-size: 16px; width: 100%; max-width: 280px; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
-        .btn:disabled { background: #333; color: #777; cursor: not-allowed; }
     </style>
 </head>
 <body>
@@ -21,8 +20,9 @@
     const xrButton = document.getElementById('xr-button');
     let xrSession = null;
     let gl = null;
+    let shaderProgram = null;
+    let vertexBuffer = null;
 
-    // 1. Inicialización idéntica al repositorio oficial de la W3C
     if (navigator.xr) {
         navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
             if (supported) {
@@ -36,42 +36,90 @@
         xrButton.textContent = 'Navegador sin WebXR';
     }
 
-    async function onButtonClicked() {
+    xrButton.onclick = () => {
         if (!xrSession) {
-            // Pedimos la sesión de forma plana sin configuraciones opcionales que alteren la GPU
             navigator.xr.requestSession('immersive-ar').then(onSessionStarted);
         } else {
             xrSession.end();
         }
-    }
-    xrButton.onclick = onButtonClicked;
+    };
 
     function onSessionStarted(session) {
         xrSession = session;
         xrButton.textContent = 'SALIR';
 
-        // Creamos el contexto WebGL sin librerías intermedias
         const canvas = document.createElement('canvas');
         gl = canvas.getContext('webgl', { xrCompatible: true });
 
-        // Enlazamos el buffer nativo del teléfono exactamente como la W3C
+        // Inicializamos los gráficos 3D nativos
+        initGLObjects();
+
         xrSession.updateRenderState({ baseLayer: new XRWebGLLayer(xrSession, gl) });
         
         xrSession.requestReferenceSpace('local').then((refSpace) => {
             xrSession.requestAnimationFrame((time, frame) => onXRFrame(time, frame, refSpace));
         });
 
-        xrSession.addEventListener('end', onSessionEnded);
+        xrSession.addEventListener('end', () => {
+            xrSession = null;
+            window.location.reload();
+        });
     }
 
-    function onSessionEnded() {
-        xrSession = null;
-        xrButton.textContent = 'INICIAR AR';
-        window.location.reload(); // Recarga para limpiar buffers de video enganchados
+    // Código nativo para construir un Cubo 3D en la GPU
+    function initGLObjects() {
+        const vsSource = `
+            attribute vec3 position;
+            attribute vec3 color;
+            varying vec3 vColor;
+            uniform mat4 uProjectionMatrix;
+            uniform mat4 uViewMatrix;
+            void main() {
+                vColor = color;
+                // Posicionamos el objeto un poco hacia abajo y al frente (Z = -0.6 metros)
+                vec3 offsetPos = position + vec3(0.0, -0.2, -0.6);
+                gl_Position = uProjectionMatrix * uViewMatrix * vec4(offsetPos, 1.0);
+            }
+        `;
+
+        const fsSource = `
+            precision mediump float;
+            varying vec3 vColor;
+            void main() {
+                gl_FragColor = vec4(vColor, 1.0);
+            }
+        `;
+
+        const vs = gl.createShader(gl.VERTEX_SHADER);
+        gl.shaderSource(vs, vsSource);
+        gl.compileShader(vs);
+
+        const fs = gl.createShader(gl.FRAGMENT_SHADER);
+        gl.shaderSource(fs, fsSource);
+        gl.compileShader(fs);
+
+        shaderProgram = gl.createProgram();
+        gl.attachShader(shaderProgram, vs);
+        gl.attachShader(shaderProgram, fs);
+        gl.linkProgram(shaderProgram);
+
+        // Vértices y colores del cubo (Formato: X, Y, Z, R, G, B)
+        const vertices = new Float32Array([
+            -0.1,-0.1, 0.1,  1,0,0,   0.1,-0.1, 0.1,  1,0,0,   0.1, 0.1, 0.1,  1,0,0,
+            -0.1,-0.1, 0.1,  1,0,0,   0.1, 0.1, 0.1,  1,0,0,  -0.1, 0.1, 0.1,  1,0,0,
+            -0.1,-0.1,-0.1,  0,1,0,  -0.1, 0.1,-0.1,  0,1,0,   0.1, 0.1,-0.1,  0,1,0,
+            -0.1,-0.1,-0.1,  0,1,0,   0.1, 0.1,-0.1,  0,1,0,   0.1,-0.1,-0.1,  0,1,0,
+            -0.1, 0.1,-0.1,  0,0,1,  -0.1, 0.1, 0.1,  0,0,1,   0.1, 0.1, 0.1,  0,0,1,
+            -0.1, 0.1,-0.1,  0,0,1,   0.1, 0.1, 0.1,  0,0,1,   0.1, 0.1,-0.1,  0,0,1,
+            -0.1,-0.1,-0.1,  1,1,0,   0.1,-0.1,-0.1,  1,1,0,   0.1,-0.1, 0.1,  1,1,0,
+            -0.1,-0.1,-0.1,  1,1,0,   0.1,-0.1, 0.1,  1,1,0,  -0.1,-0.1, 0.1,  1,1,0
+        ]);
+
+        vertexBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
     }
 
-    // 2. Renderizado de un Cubo usando WebGL Puro (Matrices Básicas)
-    // Código optimizado para evitar la pantalla negra en GPUs conflictivas
     function onXRFrame(time, frame, refSpace) {
         let session = frame.session;
         session.requestAnimationFrame((t, f) => onXRFrame(t, f, refSpace));
@@ -81,16 +129,33 @@
             let glLayer = session.renderState.baseLayer;
             gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);
 
-            // Limpiamos pantalla asegurando transparencia total (Cámara física visible)
             gl.clearColor(0, 0, 0, 0);
             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-            // Dibujamos un objeto básico en pantalla mediante comandos nativos de WebGL
-            // Esto asegura que si el test oficial pintaba algo, esto también se pintará
+            gl.useProgram(shaderProgram);
+            gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+
+            const positionLoc = gl.getAttribLocation(shaderProgram, 'position');
+            gl.enableVertexAttribArray(positionLoc);
+            gl.vertexAttribPointer(positionLoc, 3, gl.FLOAT, false, 24, 0);
+
+            const colorLoc = gl.getAttribLocation(shaderProgram, 'color');
+            gl.enableVertexAttribArray(colorLoc);
+            gl.vertexAttribPointer(colorLoc, 3, gl.FLOAT, false, 24, 12);
+
             for (let view of pose.views) {
                 let viewport = glLayer.getViewport(view);
                 gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
-                // Aquí el hardware dibuja la matriz de proyección nativa de la cámara
+
+                // Pasamos las matrices de la cámara física directo al motor 3D
+                const pMatrixLoc = gl.getUniformLocation(shaderProgram, 'uProjectionMatrix');
+                gl.uniformMatrix4fv(pMatrixLoc, false, view.projectionMatrix);
+
+                const vMatrixLoc = gl.getUniformLocation(shaderProgram, 'uViewMatrix');
+                gl.uniformMatrix4fv(vMatrixLoc, false, view.transform.inverse.matrix);
+
+                // Pintamos los triángulos del cubo
+                gl.drawArrays(gl.TRIANGLES, 0, 24);
             }
         }
     }
