@@ -322,16 +322,16 @@ $('instBtn').onclick=async()=>{
   if(deferredPrompt){const p=deferredPrompt;deferredPrompt=null;p.prompt();await p.userChoice;instUI();return}
   if(isIOS()){say(['Para instalar: toca el botón Compartir de Safari (el cuadrado con flecha ↑) y elige "Agregar a inicio".'],'^');return}
   wantsInstall=true;
-  say(['Preparando la instalación… si no aparece el diálogo en unos segundos, este navegador aún no la ofrece (Chrome a veces espera un poco después de desinstalar). Vuelve a intentar en un momento, o usa el menú ⋮ → "Instalar app".'],'-');
+  say(['Chrome aún no ofrece instalar. Espera un momento y reintenta, o usa el menú ⋮.'],'-');
 };
 instUI();
 if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
 
 /* ===== AR (WebXR hit-test, Android/Chrome only): places the live pixel-art sprite on a real surface ===== */
 if(navigator.xr&&navigator.xr.isSessionSupported){navigator.xr.isSessionSupported('immersive-ar').then(ok=>{if(ok)$('arBtn').hidden=false}).catch(()=>{})}
-function loadThree(){return new Promise((res,rej)=>{if(window.THREE)return res();const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/three.js/128/three.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s)})}
+function loadThree(){return new Promise((res,rej)=>{if(window.THREE)return res();const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s)})}
 async function startAR(){
-  try{await loadThree()}catch(e){console.error('AR: three.js load failed',e);say(['No se pudo cargar el componente de AR (no es necesariamente tu conexión: puede ser un bloqueador de anuncios/rastreadores). Intenta de nuevo, o desactiva bloqueadores para este sitio.'],'-');return}
+  try{await loadThree()}catch(e){console.error('AR: three.js load failed',e);say(['No se pudo cargar AR (puede ser un bloqueador). Intenta de nuevo.'],'-');return}
   const canvas=$('arCanvas');canvas.hidden=false;$('arOverlay').hidden=false;
   const renderer=new THREE.WebGLRenderer({canvas,alpha:true,antialias:true});
   renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);renderer.xr.enabled=true;
@@ -345,7 +345,7 @@ async function startAR(){
   function end(){canvas.hidden=true;$('arOverlay').hidden=true;renderer.setAnimationLoop(null);try{renderer.dispose()}catch(e){}}
   try{
     session=await navigator.xr.requestSession('immersive-ar',{requiredFeatures:['hit-test'],optionalFeatures:['dom-overlay'],domOverlay:{root:$('arOverlay')}});
-  }catch(e){console.error('AR: requestSession failed',e);say(['No se pudo iniciar la cámara para AR. Revisa que le diste permiso de cámara a este sitio, y que ningún otro app la esté usando.'],'-');end();return}
+  }catch(e){console.error('AR: requestSession failed',e);say(['No se pudo abrir la cámara. Revisa el permiso de cámara.'],'-');end();return}
   await renderer.xr.setSession(session);
   const viewerSpace=await session.requestReferenceSpace('viewer');
   hitTestSource=await session.requestHitTestSource({space:viewerSpace});
