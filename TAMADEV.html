@@ -1,0 +1,89 @@
+/* ===== AR (WebXR hit-test, Android/Chrome only): places the live pixel-art sprite on a real surface ===== */
+if(navigator.xr&&navigator.xr.isSessionSupported){navigator.xr.isSessionSupported('immersive-ar').then(ok=>{if(ok)$('arBtn').hidden=false}).catch(()=>{})}
+
+// Cargamos la versión r160 para la compatibilidad de cámara y GPU libre de pantallas negras
+function loadThree(){return new Promise((res,rej)=>{if(window.THREE&&window.THREE.REVISION >= 160)return res();const s=document.createElement('script');s.src='https://cloudflare.com})}
+
+async function startAR(){
+  try{await loadThree()}catch(e){console.error('AR: three.js load failed',e);say(['No se pudo cargar AR. Intenta de nuevo.'],'-');return}
+  
+  const canvas=$('arCanvas');canvas.hidden=false;$('arOverlay').hidden=false;
+  
+  // Configuración limpia del renderer plano
+  const renderer=new THREE.WebGLRenderer({canvas,alpha:true,antialias:false});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.setSize(innerWidth,innerHeight);
+  renderer.xr.enabled=true;
+  
+  const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 20);
+  
+  // Captura y renderizado nítido de tu pixel-art del Tamagotchi
+  const tex=new THREE.CanvasTexture($('cv'));
+  tex.magFilter=THREE.NearestFilter;
+  tex.minFilter=THREE.NearestFilter;
+  
+  // Usamos Mesh con PlaneGeometry en lugar de Sprite para poder bloquear la inclinación vertical
+  const geometry = new THREE.PlaneGeometry(0.25, 0.25);
+  const material = new THREE.MeshBasicMaterial({map:tex,transparent:true,side:THREE.DoubleSide});
+  const petMesh = new THREE.Mesh(geometry, material);
+  petMesh.visible=false;
+  scene.add(petMesh);
+  
+  // Retícula oficial de la W3C para marcar el suelo
+  const reticle=new THREE.Mesh(new THREE.RingGeometry(.05,.07,32).rotateX(-Math.PI/2),new THREE.MeshBasicMaterial({color:0xb5f23d}));
+  reticle.visible=false;reticle.matrixAutoUpdate=false;scene.add(reticle);
+  
+  let hitTestSource=null,session=null;
+  function end(){canvas.hidden=true;$('arOverlay').hidden=true;renderer.setAnimationLoop(null);try{renderer.dispose()}catch(e){}}
+  
+  try{
+    session=await navigator.xr.requestSession('immersive-ar',{requiredFeatures:['hit-test'],optionalFeatures:['dom-overlay'],domOverlay:{root:$('arOverlay')}});
+  }catch(e){console.error('AR: requestSession failed',e);say(['Permiso de cámara denegado o no soportado.'],'-');end();return}
+  
+  await renderer.xr.setSession(session);
+  const viewerSpace=await session.requestReferenceSpace('viewer');
+  hitTestSource=await session.requestHitTestSource({space:viewerSpace});
+  
+  // Al tocar la pantalla, anclamos el sprite en la posición exacta detectada en el suelo
+  session.addEventListener('select',()=>{
+    if(reticle.visible){
+      petMesh.position.setFromMatrixPosition(reticle.matrix);
+      // Elevamos el sprite la mitad de su tamaño para que se apoye perfectamente "sobre" el suelo y no se entierre
+      petMesh.position.y += 0.125; 
+      petMesh.visible=true;
+    }
+  });
+  
+  session.addEventListener('end',end);
+  $('arExit').onclick=()=>{const safety=setTimeout(()=>end(),1200);Promise.resolve(session.end()).catch(()=>{}).finally(()=>clearTimeout(safety))};
+  
+  renderer.setAnimationLoop((t,frame)=>{
+    if(frame&&hitTestSource){
+      const refSpace=renderer.xr.getReferenceSpace(),hits=frame.getHitTestResults(hitTestSource);
+      if(hits.length){
+        reticle.visible=true;
+        reticle.matrix.fromArray(hits[0].getPose(refSpace).transform.matrix);
+      }else{
+        reticle.visible=false;
+      }
+    }
+    
+    // MATRIZ Y-BILLBOARD: El sprite sigue tus ojos horizontalmente pero ignora la inclinación hacia arriba o abajo
+    if(petMesh.visible){
+      // Obtenemos la posición de la cámara real en el mundo 3D
+      const camPos = new THREE.Vector3();
+      camera.getWorldPosition(camPos);
+      
+      // Creamos el vector de dirección apuntando al teléfono, pero forzamos que compartan la misma altura (Y)
+      const targetPos = new THREE.Vector3(camPos.x, petMesh.position.y, camPos.z);
+      
+      // Forzamos al plano a mirar esa posición corregida
+      petMesh.lookAt(targetPos);
+    }
+    
+    // Mantiene viva la animación de tu Tamagotchi (latidos, frames, estados) directo en la textura de AR
+    tex.needsUpdate=true;
+    renderer.render(scene,camera);
+  });
+}
+$('arBtn').onclick=startAR;
