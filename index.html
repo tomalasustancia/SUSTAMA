@@ -334,6 +334,7 @@ async function startAR(){
   try{await loadThree()}catch(e){console.error('AR: three.js load failed',e);say(['No se pudo cargar AR (puede ser un bloqueador). Intenta de nuevo.'],'-');return}
   const canvas=$('arCanvas');canvas.hidden=false;$('arOverlay').hidden=false;
   const renderer=new THREE.WebGLRenderer({canvas,alpha:true,antialias:true});
+  renderer.setClearColor(0x000000,0);
   renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);renderer.xr.enabled=true;
   const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera();
   const tex=new THREE.CanvasTexture($('cv'));tex.magFilter=THREE.NearestFilter;tex.minFilter=THREE.NearestFilter;
@@ -351,7 +352,7 @@ async function startAR(){
   hitTestSource=await session.requestHitTestSource({space:viewerSpace});
   session.addEventListener('select',()=>{if(reticle.visible){sprite.position.setFromMatrixPosition(reticle.matrix);sprite.visible=true}});
   session.addEventListener('end',end);
-  $('arExit').onclick=()=>session.end();
+  $('arExit').onclick=()=>{const safety=setTimeout(()=>end(),1200);Promise.resolve(session.end()).catch(()=>{}).finally(()=>clearTimeout(safety))};
   renderer.setAnimationLoop((t,frame)=>{
     if(frame&&hitTestSource){const refSpace=renderer.xr.getReferenceSpace(),hits=frame.getHitTestResults(hitTestSource);
       if(hits.length){reticle.visible=true;reticle.matrix.fromArray(hits[0].getPose(refSpace).transform.matrix)}else reticle.visible=false}
