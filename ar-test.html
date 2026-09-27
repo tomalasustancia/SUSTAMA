@@ -3,27 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Debug Aislado WebXR</title>
+    <title>SUSTAMA AR — Suelo y Billboard</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #111; color: white; font-family: monospace; }
+        body { margin: 0; overflow: hidden; background-color: transparent; font-family: monospace; }
         #ar-overlay { position: fixed; inset: 0; z-index: 10; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; padding: 30px; }
-        .btn { pointer-events: auto; background: #b5f23d; color: black; border: none; font-weight: bold; padding: 18px 24px; border-radius: 8px; font-size: 16px; width: 100%; max-width: 280px; cursor: pointer; }
-        #console-log { position: fixed; top: 10px; left: 10px; right: 10px; background: rgba(0,0,0,0.85); color: #7ccf3a; padding: 12px; font-size: 12px; border-radius: 6px; max-height: 180px; overflow-y: auto; z-index: 999; border: 1px solid #333; }
-        .err { color: #ff5a3c !important; }
+        .btn { pointer-events: auto; background: #b5f23d; color: black; border: none; font-weight: bold; padding: 16px 24px; border-radius: 8px; font-size: 16px; width: 100%; max-width: 280px; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+        #log { position: fixed; top: 10px; left: 10px; right: 10px; background: rgba(0,0,0,0.7); color: white; padding: 10px; font-size: 11px; border-radius: 5px; pointer-events: none; max-height: 50px; overflow: hidden; }
     </style>
 </head>
 <body>
 
-    <!-- Consola de salida visual en pantalla para ver los errores reales del celular -->
-    <div id="console-log">Iniciando trazas del sistema...</div>
+    <div id="log">Mueve el celular buscando el suelo...</div>
 
     <div id="ar-overlay">
-        <button id="xr-button" class="btn">FORZAR INICIO AR</button>
+        <button id="xr-button" class="btn">INICIAR AR</button>
     </div>
 
 <script>
     const xrButton = document.getElementById('xr-button');
-    const logBox = document.getElementById('console-log');
+    const logEl = document.getElementById('log');
     
     let xrSession = null;
     let gl = null;
@@ -32,81 +30,64 @@
     let petTexture = null;
     let hitTestSource = null;
     let localRefSpace = null;
-    let petPosition = [0, 0, -0.5]; 
 
-    function report(msg, isErr = false) {
-        const div = document.createElement('div');
-        if (isErr) div.className = 'err';
-        div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-        logBox.appendChild(div);
-        logBox.scrollTop = logBox.scrollHeight;
-    }
+    // Posición inicial por defecto y estado de colocación
+    let petPosition = [0, -0.2, -0.5]; 
+    let petPlaced = false;
+    let currentFloorMatrix = null;
 
-    // Monitoreo de errores globales de compilación o runtime
-    window.onerror = function(message, source, lineno) {
-        report(`CRASH: ${message} (Línea ${lineno})`, true);
-    };
+    // Sprite de prueba con fondo transparente (PNG)
+    const SPRITE_URL = "https://wikimedia.org";
 
-    // 1. Validar entorno seguro
-    report(`Protocolo actual: ${window.location.protocol}`);
-    if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
-        report('ADVERTENCIA: No estás en HTTPS o Localhost. WebXR probablemente fallará por seguridad.', true);
-    }
+    function log(msg) { logEl.textContent = msg; }
 
-    if (!navigator.xr) {
-        report('ERROR CLAVE: "navigator.xr" no existe en este navegador.', true);
-    } else {
-        report('"navigator.xr" detectado. Validando "immersive-ar"...');
-        navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
-            if (supported) {
-                report('¡"immersive-ar" soportado de forma nativa!');
-                xrButton.textContent = 'INICIAR TEST AR';
-            } else {
-                report('isSessionSupported retornó FALSE (Hardware/ARCore no enlazado con Chrome).', true);
-                xrButton.textContent = 'FORZADO (Sin Soporte Oficial)';
-            }
-        }).catch(err => report('Fallo al consultar soporte: ' + err.message, true));
-    }
-
-    // Forzamos la ejecución al hacer click, saltándonos el bloqueo preventivo
-    xrButton.onclick = async () => {
-        if (xrSession) {
+    xrButton.onclick = () => {
+        if (!xrSession) {
+            navigator.xr.requestSession('immersive-ar', {
+                requiredFeatures: ['hit-test'] // Obligatorio para detectar superficies
+            }).then(onSessionStarted);
+        } else {
             xrSession.end();
-            return;
-        }
-
-        report('Solicitando sesión "immersive-ar" al sistema operativo...');
-        try {
-            // Intentamos arrancar con hit-test básico
-            xrSession = await navigator.xr.requestSession('immersive-ar', {
-                requiredFeatures: ['hit-test']
-            });
-            
-            report('¡Sesión XR concedida por Android!', false);
-            xrButton.textContent = 'SALIR';
-            initWebGL();
-        } catch (e) {
-            report(`Fallo crítico en requestSession: ${e.message}`, true);
-            report('Intentando bypass de emergencia sin "hit-test"...', false);
-            
-            try {
-                // Bypass secundario: si el hit-test del suelo rompe la inicialización, arrancamos AR básico sin suelo
-                xrSession = await navigator.xr.requestSession('immersive-ar');
-                report('¡Sesión XR de emergencia iniciada (Sin detección de suelo)!', false);
-                xrButton.textContent = 'SALIR';
-                initWebGL();
-            } catch(err2) {
-                report(`Bypass fallido: ${err2.message}. Tu navegador bloqueó el hardware de la cámara por completo.`, true);
-            }
         }
     };
 
-    function initWebGL() {
+    function onSessionStarted(session) {
+        xrSession = session;
+        xrButton.textContent = 'SALIR';
+
         const canvas = document.createElement('canvas');
         gl = canvas.getContext('webgl', { xrCompatible: true });
-        if (!gl) { report('No se pudo inicializar el contexto WebGL.', true); return; }
 
-        // Inicializar shaders nativos planos
+        initGLObjects();
+        loadTexture(SPRITE_URL);
+
+        xrSession.updateRenderState({ baseLayer: new XRWebGLLayer(xrSession, gl) });
+        
+        xrSession.requestReferenceSpace('local').then((refSpace) => {
+            localRefSpace = refSpace;
+            return xrSession.requestReferenceSpace('viewer');
+        }).then((viewerSpace) => {
+            return xrSession.requestHitTestSource({ space: viewerSpace });
+        }).then((source) => {
+            hitTestSource = source;
+            xrSession.requestAnimationFrame(onXRFrame);
+        });
+
+        // MECÁNICA 1: Al hacer TAP se congela el Tamagotchi en las coordenadas del suelo detectado
+        xrSession.addEventListener('select', () => {
+            if (hitTestSource && currentFloorMatrix) {
+                // Extraemos la posición exacta del impacto del rayo con el suelo real [X, Y, Z]
+                petPosition = [currentFloorMatrix[12], currentFloorMatrix[13], currentFloorMatrix[14]];
+                petPlaced = true;
+                log("¡SUSTAMA plantado en el suelo!");
+            }
+        });
+
+        xrSession.addEventListener('end', () => window.location.reload());
+    }
+
+    function initGLObjects() {
+        // SHADER DE VÉRTICES: Procesa la matriz inversa de la cámara para calcular el ángulo horizontal
         const vsSource = `
             attribute vec3 position;
             attribute vec2 texCoord;
@@ -114,16 +95,36 @@
             uniform mat4 uProjectionMatrix;
             uniform mat4 uViewMatrix;
             uniform vec3 uPetPosition;
+            
             void main() {
                 vTexCoord = texCoord;
-                gl_Position = uProjectionMatrix * uViewMatrix * vec4(position + uPetPosition, 1.0);
+                
+                // MECÁNICA 2: BILLBOARD HORIZONTAL ESTRICTO (Ignora inclinación vertical)
+                // Obtenemos el ángulo horizontal en el plano XZ usando la orientación de la cámara
+                float angle = atan(uViewMatrix[0][2], uViewMatrix[2][2]);
+                
+                // Construimos la matriz de rotación pura sobre el eje vertical Y
+                mat4 billboardMatrix = mat4(
+                    cos(angle), 0.0, -sin(angle), 0.0,
+                    0.0,        1.0,  0.0,        0.0,
+                    sin(angle), 0.0,  cos(angle), 0.0,
+                    0.0,        0.0,  0.0,        1.0
+                );
+                
+                // Rotamos el sprite plano y lo movemos a la coordenada espacial física detectada
+                vec4 worldPosition = vec4(uPetPosition, 1.0) + (billboardMatrix * vec4(position, 1.0));
+                gl_Position = uProjectionMatrix * uViewMatrix * worldPosition;
             }
         `;
+
         const fsSource = `
             precision mediump float;
             varying vec2 vTexCoord;
+            uniform sampler2D uTexture;
             void main() {
-                gl_FragColor = vec4(1.0, 0.35, 0.23, 1.0); // Pintamos un plano naranja sólido de prueba directa
+                vec4 texColor = texture2D(uTexture, vTexCoord);
+                if(texColor.a < 0.2) discard; // Transparencia estricta para quitar el recuadro del sprite
+                gl_FragColor = texColor;
             }
         `;
 
@@ -131,20 +132,32 @@
         const fs = gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(fs, fsSource); gl.compileShader(fs);
         shaderProgram = gl.createProgram(); gl.attachShader(shaderProgram, vs); gl.attachShader(shaderProgram, fs); gl.linkProgram(shaderProgram);
 
+        // Vértices y coordenadas UV del plano geométrico (X, Y, Z, U, V)
         const vertices = new Float32Array([
-            -0.1, -0.1, 0.0,  0.0, 1.0,   0.1, -0.1, 0.0,  1.0, 1.0,   0.1,  0.1, 0.0,  1.0, 0.0,
-            -0.1, -0.1, 0.0,  0.0, 1.0,   0.1,  0.1, 0.0,  1.0, 0.0,  -0.1,  0.1, 0.0,  0.0, 0.0
+            -0.15, -0.15,  0.0,   0.0, 1.0,
+             0.15, -0.15,  0.0,   1.0, 1.0,
+             0.15,  0.15,  0.0,   1.0, 0.0,
+            -0.15, -0.15,  0.0,   0.0, 1.0,
+             0.15,  0.15,  0.0,   1.0, 0.0,
+            -0.15,  0.15,  0.0,   0.0, 0.0,
         ]);
-        vertexBuffer = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer); gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
 
-        xrSession.updateRenderState({ baseLayer: new XRWebGLLayer(xrSession, gl) });
-        xrSession.requestReferenceSpace('local').then(refSpace => {
-            localRefSpace = refSpace;
-            xrSession.requestAnimationFrame(onXRFrame);
-            report('Bucle gráfico WebXR activo. Render corriendo.');
-        });
+        vertexBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+    }
 
-        xrSession.addEventListener('end', () => window.location.reload());
+    function loadTexture(url) {
+        petTexture = gl.createTexture();
+        const img = new Image(); img.crossOrigin = "anonymous"; img.src = url;
+        img.onload = () => {
+            gl.bindTexture(gl.TEXTURE_2D, petTexture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); // Conserva el estilo pixelado retro
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        };
     }
 
     function onXRFrame(time, frame) {
@@ -152,18 +165,42 @@
         xrSession.requestAnimationFrame(onXRFrame);
         let pose = frame.getViewerPose(localRefSpace);
 
+        if (hitTestSource) {
+            let hits = frame.getHitTestResults(hitTestSource);
+            if (hits.length) {
+                currentFloorMatrix = hits[0].getPose(localRefSpace).transform.matrix;
+                if (!petPlaced) {
+                    // Si no lo has plantado, el sprite flota temporalmente sobre el área que estás escaneando
+                    petPosition = [currentFloorMatrix[12], currentFloorMatrix[13], currentFloorMatrix[14]];
+                    log("Superficie encontrada. ¡Toca la pantalla para plantarlo!");
+                }
+            }
+        }
+
         if (pose) {
             let glLayer = xrSession.renderState.baseLayer;
             gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);
+
+            gl.enable(gl.BLEND);
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
             gl.clearColor(0, 0, 0, 0);
             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
             gl.useProgram(shaderProgram);
             gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
 
-            const posLoc = gl.getAttribLocation(shaderProgram, 'position');
-            gl.enableVertexAttribArray(posLoc);
-            gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 20, 0);
+            const positionLoc = gl.getAttribLocation(shaderProgram, 'position');
+            gl.enableVertexAttribArray(positionLoc);
+            gl.vertexAttribPointer(positionLoc, 3, gl.FLOAT, false, 20, 0);
+
+            const texCoordLoc = gl.getAttribLocation(shaderProgram, 'texCoord');
+            gl.enableVertexAttribArray(texCoordLoc);
+            gl.vertexAttribPointer(texCoordLoc, 2, gl.FLOAT, false, 20, 12);
+
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, petTexture);
+            gl.uniform1i(gl.getUniformLocation(shaderProgram, 'uTexture'), 0);
 
             gl.uniform3fv(gl.getUniformLocation(shaderProgram, 'uPetPosition'), petPosition);
 
