@@ -3,122 +3,118 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>WebXR Pure Isolation Test</title>
+    <title>AR Isolation Test</title>
     <style>
-        body { margin: 0; background: #000; color: #fff; font-family: monospace; overflow: hidden; }
-        #ui { position: fixed; z-index: 100; padding: 20px; text-align: center; width: 100%; box-sizing: border-box; }
-        button { padding: 15px 25px; font-size: 16px; font-weight: bold; background: #b5f23d; color: #000; border: none; border-radius: 8px; cursor: pointer; }
-        button:disabled { background: #555; color: #aaa; }
-        #console { text-align: left; background: rgba(0,0,0,0.8); padding: 10px; margin-top: 15px; border-radius: 5px; max-height: 200px; overflow-y: auto; font-size: 12px; }
-        /* Video de respaldo por si el passthrough falla */
-        #fallback-video { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; z-index: 1; pointer-events: none; }
-        canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; pointer-events: none; }
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
+        #dom-overlay { position: fixed; inset: 0; z-index: 10; pointer-events: none; padding: 20px; }
+        .ui-element { pointer-events: auto; background: rgba(0,0,0,0.7); color: white; padding: 12px; border-radius: 8px; text-align: center; }
+        button { background: #b5f23d; color: black; border: none; font-weight: bold; padding: 12px 20px; border-radius: 5px; cursor: pointer; width: 100%; max-width: 300px; font-size: 16px; }
+        button:disabled { background: #444; color: #888; }
+        #status { margin-top: 10px; font-size: 14px; color: #7ccf3a; }
     </style>
+    <!-- Importamos una versión moderna de Three.js que gestiona correctamente el canal Alpha en XR -->
+    <script src="https://cloudflare.com"></script>
 </head>
 <body>
 
-    <div id="ui">
-        <h2>Aislamiento WebXR Nativo</h2>
-        <button id="start-btn" disabled>Comprobando...</button>
-        <div id="console"></div>
+    <div id="dom-overlay">
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%;">
+            <button id="ar-button" disabled>Cargando WebXR...</button>
+            <div id="status" class="ui-element">Comprobando compatibilidad...</div>
+        </div>
     </div>
 
-    <video id="fallback-video" autoplay playsinline muted hidden></video>
-    <canvas id="webgl-canvas"></canvas>
-
 <script>
-    const logEl = document.getElementById('console');
-    const startBtn = document.getElementById('start-btn');
-    const canvas = document.getElementById('webgl-canvas');
-    const video = document.getElementById('fallback-video');
+    const button = document.getElementById('ar-button');
+    const statusDiv = document.getElementById('status');
     
-    function log(msg, isError = false) {
-        const div = document.createElement('div');
-        div.style.color = isError ? '#ff5a3c' : '#7ccf3a';
-        div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-        logEl.appendChild(div);
-        logEl.scrollTop = logEl.scrollHeight;
-        console.log(msg);
-    }
+    let scene, camera, renderer, cube;
 
-    // 1. Verificar soporte WebXR
+    // 1. Validar compatibilidad del sistema
     if (!navigator.xr) {
-        log('WebXR no está disponible en este navegador.', true);
-        startBtn.textContent = 'Sin soporte WebXR';
+        statusDiv.textContent = "WebXR no soportado en este navegador. Si estás en iOS, Safari no lo permite de forma nativa.";
+        statusDiv.style.color = "#ff5a3c";
     } else {
         navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
             if (supported) {
-                log('Soporte nativo "immersive-ar" DETECTADO.');
-                startBtn.disabled = false;
-                startBtn.textContent = 'Iniciar AR Puro';
+                button.disabled = false;
+                button.textContent = "Iniciar AR";
+                statusDiv.textContent = "Listo para iniciar. Busca un cubo rojo al entrar.";
             } else {
-                log('El navegador tiene WebXR pero no soporta RA de inmersión.', true);
-                startBtn.textContent = 'RA no soportada';
+                statusDiv.textContent = "El navegador tiene WebXR pero tu dispositivo no soporta 'immersive-ar' (Falta ARCore instalado).";
+                statusDiv.style.color = "#ff5a3c";
             }
-        }).catch(err => log('Error al validar soporte: ' + err.message, true));
+        });
     }
 
-    startBtn.onclick = async () => {
-        startBtn.disabled = true;
-        log('Solicitando cámara tradicional de respaldo primero (forzar permisos)...');
-        
-        // Forzamos el acceso a la cámara vía web estándar para descartar bloqueos de hardware
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-            video.srcObject = stream;
-            video.hidden = false;
-            log('Cámara del sistema abierta con éxito en el fondo.', false);
-        } catch (e) {
-            log('No se pudo abrir la cámara de forma tradicional: ' + e.message, true);
-        }
+    // 2. Configurar la escena de Three.js
+    function initThree() {
+        scene = new THREE.Scene();
+        camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
-        log('Abriendo sesión WebXR...');
+        // Creamos un WebGLRenderer asegurando Alpha e indicando compatibilidad con XR
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.xr.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        // Agregamos un cubo rojo básico justo enfrente de donde iniciará la cámara (Z = -0.5 metros)
+        const geometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+        const material = new THREE.MeshBasicMaterial({ color: 0xff5a3c });
+        cube = new THREE.Mesh(geometry, material);
+        cube.position.set(0, 0, -0.5); 
+        scene.add(cube);
+
+        // Luz básica por si cambias el material a uno con sombras en el futuro
+        const light = new THREE.HemisphereLight(0xffffff, 0xbbbbbb, 1);
+        scene.add(light);
+    }
+
+    // 3. Activar la sesión de Realidad Aumentada
+    async function startAR() {
+        initThree();
+
         try {
-            // Solicitamos una sesión limpia sin features complejas
             const session = await navigator.xr.requestSession('immersive-ar', {
                 optionalFeatures: ['dom-overlay'],
-                domOverlay: { root: document.getElementById('ui') }
+                domOverlay: { root: document.getElementById('dom-overlay') }
             });
-            
-            log('¡Sesión WebXR iniciada correctamente!', false);
-            
-            // Inicializar WebGL Puro (sin librerías)
-            const gl = canvas.getContext('webgl', { xrCompatible: true });
-            if (!gl) {
-                log('No se pudo crear el contexto WebGL compatible con XR.', true);
-                return;
-            }
 
-            const xrLayer = new XRWebGLLayer(session, gl);
-            session.updateRenderState({ baseLayer: xrLayer });
-            
-            const refSpace = await session.requestReferenceSpace('local');
-            
-            // Bucle de renderizado nativo
-            const onXRFrame = (time, frame) => {
-                session.requestAnimationFrame(onXRFrame);
-                
-                const pose = frame.getViewerPose(refSpace);
-                if (pose) {
-                    gl.bindFramebuffer(gl.FRAMEBUFFER, xrLayer.framebuffer);
-                    
-                    // Limpiamos la pantalla asegurando transperencia total para ver la cámara
-                    gl.clearColor(0.0, 0.0, 0.0, 0.0); 
-                    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-                    
-                    // IMPORTANTE: Si la pantalla sigue negra aquí, el fallo es de ARCore (Android) 
-                    // comunicando los frames de la cámara hacia la capa WebGL de Chrome.
+            await renderer.xr.setSession(session);
+            button.style.display = 'none';
+            statusDiv.textContent = "AR Activo. Si todo está negro pero ves el cubo rojo flotando, tu ARCore de Android está fallando.";
+
+            // Cambiamos el texto del botón para permitir salir de la experiencia
+            setTimeout(() => {
+                button.style.display = 'block';
+                button.textContent = "Cerrar AR";
+                button.disabled = false;
+                button.onclick = () => session.end();
+            }, 2000);
+
+            // Bucle nativo de animación controlado por Three.js XR
+            renderer.setAnimationLoop(() => {
+                // Rotamos un poco el cubo en cada frame para verificar que el renderizado está vivo
+                if (cube) {
+                    cube.rotation.x += 0.01;
+                    cube.rotation.y += 0.01;
                 }
-            };
-            
-            session.requestAnimationFrame(onXRFrame);
-            session.addEventListener('end', () => log('Sesión AR finalizada.'));
+                renderer.render(scene, camera);
+            });
+
+            session.addEventListener('end', () => {
+                renderer.setAnimationLoop(null);
+                window.location.reload(); // Recargamos para limpiar estados de WebGL
+            });
 
         } catch (err) {
-            log('Fallo crítico al iniciar sesión XR: ' + err.message, true);
-            startBtn.disabled = false;
+            statusDiv.textContent = "Error al abrir la sesión: " + err.message;
+            statusDiv.style.color = "#ff5a3c";
         }
-    };
+    }
+
+    button.onclick = startAR;
 </script>
 </body>
 </html>
