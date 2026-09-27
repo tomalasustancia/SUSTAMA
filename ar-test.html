@@ -327,152 +327,157 @@ $('instBtn').onclick=async()=>{
 instUI();
 if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
 
-/* ===== AR (Isolated 3D Spherical Projection): 100% Desanclado del Espacio 2D ===== */
-if (window.DeviceOrientationEvent) {
-  $('arBtn').hidden = false;
+/* ===== AR (Official WebXR Hit-Test Integration): Destroy-Proof Isolated Code ===== */
+if(navigator.xr && navigator.xr.isSessionSupported){
+  navigator.xr.isSessionSupported('immersive-ar').then(ok => {
+    if(ok) $('arBtn').hidden = false;
+  }).catch(()=>{});
 }
 
-let arActive = false;
-let cameraStream = null;
-let initialGyro = null;
-
-// Coordenadas espaciales de la mascota en el mundo real (en metros)
-// X = Horizontal, Y = Altura (Suelo aparente), Z = Distancia hacia el frente
-let petWorldPos = { x: 0, y: -0.4, z: -1.2 }; 
+function loadThree(){
+  return new Promise((res,rej)=>{
+    if(window.THREE) return res();
+    const s = document.createElement('script');
+    s.src = 'https://cloudflare.com';
+    s.onload = res;
+    s.onerror = rej;
+    document.head.appendChild(s);
+  });
+}
 
 async function startAR() {
-  if (arActive) return;
+  // 1. SALVAGUARDA DE INTERFAZ: Ocultamos el juego 2D para que Three.js no rompa tu HUD ni tus variables
+  $('app').style.display = 'none';
+  
+  try {
+    await loadThree();
+  } catch(e) {
+    console.error('AR: Error cargando Three.js', e);
+    $('app').style.display = 'flex';
+    return;
+  }
+
+  const canvas = $('arCanvas');
+  const overlay = $('arOverlay');
+  canvas.hidden = false;
+  overlay.hidden = false;
+
+  // 2. RENDERER PLANO: Sin configuraciones agresivas que congelen tu GPU en negro
+  const renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: false });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.xr.enabled = true;
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 20);
+
+  // 3. CAPTURA DEL TAMAGOTCHI: Extraemos el frame activo directamente de tu Canvas pixel-art
+  const tex = new THREE.CanvasTexture($('cv'));
+  tex.magFilter = THREE.NearestFilter; // Mantiene el pixelado retro nítido y limpio
+  tex.minFilter = THREE.NearestFilter;
+
+  // Usamos un plano en lugar de un Sprite para controlar la rotación horizontal estricta (Billboard Y)
+  const geometry = new THREE.PlaneGeometry(0.25, 0.25);
+  const material = new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide });
+  const petMesh = new THREE.Mesh(geometry, material);
+  petMesh.visible = false; // Se oculta hasta que el usuario elija dónde colocarlo con un Tap
+  scene.add(petMesh);
+
+  // Retícula de escaneo en el suelo
+  const reticle = new THREE.Mesh(
+    new THREE.RingGeometry(0.05, 0.07, 32).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0xb5f23d })
+  );
+  reticle.visible = false;
+  reticle.matrixAutoUpdate = false;
+  scene.add(reticle);
+
+  let hitTestSource = null, session = null, localRefSpace = null, petPlaced = false;
+  let petPosition = new THREE.Vector3();
+  let currentFloorMatrix = null;
+
+  function end() {
+    canvas.hidden = true;
+    overlay.hidden = true;
+    renderer.setAnimationLoop(null);
+    try { renderer.dispose(); } catch(e) {}
+    
+    // RESTAURACIÓN INTEGRAL: Devolvemos tu juego 2D exactamente al estado limpio original
+    $('app').style.display = 'flex';
+  }
 
   try {
-    // 1. Encendemos la cámara trasera nativa sin usar WebXR para evitar pantallas negras
-    cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { exact: "environment" } }
+    session = await navigator.xr.requestSession('immersive-ar', {
+      requiredFeatures: ['hit-test'],
+      optionalFeatures: ['dom-overlay'],
+      domOverlay: { root: overlay }
     });
+  } catch(e) {
+    console.error('AR: requestSession falló', e);
+    end();
+    return;
+  }
 
-    let bgVideo = document.getElementById('ar-video-bg');
-    if (!bgVideo) {
-      bgVideo = document.createElement('video');
-      bgVideo.id = 'ar-video-bg';
-      bgVideo.style.cssText = 'position:fixed; inset:0; width:100vw; height:100vh; object-fit:cover; z-index:1; pointer-events:none;';
-      bgVideo.autoplay = true;
-      bgVideo.playsInline = true;
-      bgVideo.muted = true;
-      document.body.appendChild(bgVideo);
+  await renderer.xr.setSession(session);
+  const viewerSpace = await session.requestReferenceSpace('viewer');
+  hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+  localRefSpace = await session.requestReferenceSpace('local');
+
+  // MECÁNICA 1: Al tocar la pantalla fijamos establemente al SUSTAMA sobre el suelo real detectado
+  session.addEventListener('select', () => {
+    if (reticle.visible && currentFloorMatrix) {
+      petPosition.setFromMatrixPosition(reticle.matrix);
+      petMesh.position.copy(petPosition);
+      // Elevamos el eje Y la mitad de su tamaño para que pise sobre la superficie y no se entierre
+      petMesh.position.y += 0.125; 
+      petMesh.visible = true;
+      petPlaced = true;
+      $('arHint').textContent = "¡SUSTAMA colocado en el mundo real!";
     }
-    bgVideo.srcObject = cameraStream;
-    bgVideo.style.display = 'block';
+  });
 
-    // 2. DESANCLAJE DE LA UI: Ocultamos tu aplicación 2D por completo para pausar su layout
-    $('app').style.display = 'none';
-
-    // 3. Activamos los contenedores de AR originales de tu repositorio
-    const arCanvas = $('arCanvas');
-    const arOverlay = $('arOverlay');
-    arCanvas.hidden = false;
-    arOverlay.hidden = false;
-
-    // 4. Inicializamos los sensores de movimiento
-    initialGyro = null;
-    window.addEventListener('deviceorientation', handleReal3DMotion);
-    arActive = true;
-
-    say(['Modo AR 3D Espacial: Camina o gira para ver al SUSTAMA anclado al entorno.'], '^');
-  } catch (err) {
-    alert("Para activar el modo espacial, concede permisos a la cámara trasera.");
-    endAR();
-  }
-}
-
-function endAR() {
-  arActive = false;
-  window.removeEventListener('deviceorientation', handleReal3DMotion);
-
-  if (cameraStream) {
-    cameraStream.getTracks().forEach(track => track.stop());
-  }
-  const bgVideo = document.getElementById('ar-video-bg');
-  if (bgVideo) bgVideo.style.display = 'none';
-
-  // RESTAURACIÓN TOTAL: Tu app e interfaz 2D regresan al estado exacto previo
-  $('arCanvas').hidden = true;
-  $('arOverlay').hidden = true;
-  $('app').style.display = 'flex';
-}
-
-// 5. MOTOR DE PROYECCIÓN TRIDIMENSIONAL (Matemática de Perspectiva Real)
-function handleReal3DMotion(e) {
-  if (!arActive || e.alpha === null || e.beta === null || e.gamma === null) return;
-
-  if (initialGyro === null) {
-    initialGyro = { alpha: e.alpha, beta: e.beta, gamma: e.gamma };
-  }
-
-  // Calculamos las desviaciones reales del teléfono en radianes
-  let dAlpha = (e.alpha - initialGyro.alpha) * Math.PI / 180;
-  let dBeta = (e.beta - initialGyro.beta) * Math.PI / 180;
-  let dGamma = (e.gamma - initialGyro.gamma) * Math.PI / 180;
-
-  // Forzamos la normalización de ángulos para evitar saltos en giros de 360°
-  if (dAlpha > Math.PI) dAlpha -= 2 * Math.PI;
-  if (dAlpha < -Math.PI) dAlpha += 2 * Math.PI;
-
-  // Matriz de rotación simplificada de la cámara (Giroscopio del móvil)
-  // Calculamos dónde queda la mascota en relación a hacia dónde está apuntando la cámara física
-  let cosA = Math.cos(dAlpha), sinA = Math.sin(dAlpha);
-  let cosB = Math.cos(dBeta),  sinB = Math.sin(dBeta);
-
-  // Posición relativa rotada en el plano horizontal (X, Z)
-  let rx = petWorldPos.x * cosA - petWorldPos.z * sinA;
-  let rz = petWorldPos.x * sinA + petWorldPos.z * cosA;
-
-  // Posición relativa rotada en el plano vertical (Y, Z)
-  let ry = petWorldPos.y * cosB - rz * sinB;
-  let fz = petWorldPos.y * sinB + rz * cosB; // Distancia final real corregida hacia el objeto
-
-  // Renderizado en el Canvas de pantalla completa
-  const canvas = $('arCanvas');
-  const ctx = canvas.getContext('2d');
+  session.addEventListener('end', end);
   
-  // Sincronizamos el tamaño del lienzo con la pantalla física del celular
-  if (canvas.width !== innerWidth || canvas.height !== innerHeight) {
-    canvas.width = innerWidth;
-    canvas.height = innerHeight;
-  }
-  
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  $('arExit').onclick = () => {
+    const safety = setTimeout(() => end(), 1200);
+    Promise.resolve(session.end()).catch(()=>{}).finally(() => clearTimeout(safety));
+  };
 
-  // Proyección de perspectiva (Fórmula estándar de rendering 3D a pantalla 2D)
-  // Si fz es negativo, significa que el objeto quedó a tus espaldas (no se dibuja)
-  if (fz < -0.1) {
-    // Distancia focal simulada basada en el campo de visión de la cámara trasera
-    const fov = Math.min(canvas.width, canvas.height) * 0.8; 
-    
-    // Convertimos las coordenadas métricas 3D a píxeles de pantalla centrados
-    const screenX = (canvas.width / 2) + (rx * fov / -fz);
-    const screenY = (canvas.height / 2) - (ry * fov / -fz);
-    
-    // Tamaño dinámico del sprite: decrece de forma realista si te alejas (Profundidad 3D real)
-    const scale = (0.25 * fov) / -fz; 
-
-    if (screenX + scale > 0 && screenX - scale < canvas.width && screenY + scale > 0 && screenY - scale < canvas.height) {
-      ctx.save();
-      
-      // Trasladamos el origen al centro proyectado del sprite
-      ctx.translate(screenX, screenY);
-      
-      // MECÁNICA BILLBOARD Z-ALIGN: Rota el plano de forma inversa a la inclinación lateral del móvil
-      ctx.rotate(-dGamma);
-      
-      // Dibujamos tu Tamagotchi activo extrayendo la imagen exacta de tu lienzo original en vivo
-      ctx.imageSmoothingEnabled = false; // Mantiene los bordes de pixel-art limpios y nítidos
-      ctx.drawImage($('cv'), -scale / 2, -scale / 2, scale, scale);
-      
-      ctx.restore();
+  renderer.setAnimationLoop((t, frame) => {
+    if (frame && hitTestSource) {
+      const hits = frame.getHitTestResults(hitTestSource);
+      if (hits.length) {
+        reticle.visible = true;
+        currentFloorMatrix = hits[0].getPose(localRefSpace).transform.matrix;
+        reticle.matrix.fromArray(currentFloorMatrix);
+        
+        // Si aún no se ha colocado, hacemos que flote provisionalmente sobre el suelo escaneado
+        if (!petPlaced) {
+          petMesh.position.setFromMatrixPosition(reticle.matrix);
+          petMesh.position.y += 0.125;
+          petMesh.visible = true;
+          $('arHint').textContent = "Superficie encontrada. ¡Toca la pantalla para fijarlo aquí!";
+        }
+      } else {
+        if (!petPlaced) reticle.visible = false;
+      }
     }
-  }
+
+    // MECÁNICA 2: BILLBOARD HORIZONTAL ESTRICTO (Gira hacia ti, pero nunca se acuesta)
+    if (petMesh.visible) {
+      const camPos = new THREE.Vector3();
+      camera.getWorldPosition(camPos);
+      // Forzamos el objetivo a la misma altura exacta del sprite para bloquear la inclinación arriba/abajo
+      const targetPos = new THREE.Vector3(camPos.x, petMesh.position.y, camPos.z);
+      petMesh.lookAt(targetPos);
+    }
+
+    // ACTUALIZACIÓN DE TEXTURA: Extrae los frames activos de tu Tamagotchi (animación idle, latidos) en tiempo real
+    tex.needsUpdate = true;
+    renderer.render(scene, camera);
+  });
 }
 
 $('arBtn').onclick = startAR;
-$('arExit').onclick = endAR;
 })();
 </script></body></html>
