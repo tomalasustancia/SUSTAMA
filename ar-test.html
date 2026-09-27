@@ -1,183 +1,124 @@
 <!DOCTYPE html>
-<html lang="es"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>AR Test — SUSTAMA</title>
-<style>
-  body{margin:0;font-family:ui-monospace,Menlo,Consolas,monospace;background:#111;color:#eee}
-  #ui{padding:16px}
-  button{font:inherit;font-size:15px;font-weight:700;padding:12px 18px;border-radius:8px;border:2px solid #b5f23d;background:#1b1b1b;color:#b5f23d;width:100%;box-sizing:border-box}
-  button:disabled{opacity:.4}
-  #log{white-space:pre-wrap;font-size:12px;line-height:1.5;padding:12px;margin-top:12px;background:#000;border-radius:8px;max-height:60vh;overflow-y:auto}
-  .ok{color:#7ccf3a}.err{color:#ff5a3c}.info{color:#9cf}
-  #arCanvas{position:fixed;inset:0;width:100vw;height:100vh;z-index:50}
-  #arOverlay{position:fixed;inset:0;z-index:51;pointer-events:none}
-  #arExit{position:fixed;top:calc(12px + env(safe-area-inset-top));right:12px;pointer-events:auto;background:rgba(0,0,0,.7);color:#fff;border:2px solid #fff;border-radius:8px;padding:8px 14px;font:inherit}
-  #arHint{position:fixed;left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom));text-align:center;background:rgba(0,0,0,.7);color:#fff;border-radius:10px;padding:8px 12px;font-size:12px}
-  [hidden]{display:none!important}
-</style></head>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>WebXR Pure Isolation Test</title>
+    <style>
+        body { margin: 0; background: #000; color: #fff; font-family: monospace; overflow: hidden; }
+        #ui { position: fixed; z-index: 100; padding: 20px; text-align: center; width: 100%; box-sizing: border-box; }
+        button { padding: 15px 25px; font-size: 16px; font-weight: bold; background: #b5f23d; color: #000; border: none; border-radius: 8px; cursor: pointer; }
+        button:disabled { background: #555; color: #aaa; }
+        #console { text-align: left; background: rgba(0,0,0,0.8); padding: 10px; margin-top: 15px; border-radius: 5px; max-height: 200px; overflow-y: auto; font-size: 12px; }
+        /* Video de respaldo por si el passthrough falla */
+        #fallback-video { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; z-index: 1; pointer-events: none; }
+        canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2; pointer-events: none; }
+    </style>
+</head>
 <body>
-<div id="ui">
-  <h2 style="margin:0 0 8px">AR Test</h2>
-  <button id="arBtn" disabled>Comprobando soporte…</button>
-  <button id="copyBtn" style="margin-top:8px;border-color:#666;color:#ccc">📋 Copiar log</button>
-  <div id="log"></div>
-</div>
-<canvas id="arCanvas" hidden></canvas>
-<div id="arOverlay" hidden><button id="arExit">✕ Salir</button><div id="arHint">Mueve el teléfono para encontrar una superficie, luego toca la pantalla para colocar el cubo ahí.</div></div>
+
+    <div id="ui">
+        <h2>Aislamiento WebXR Nativo</h2>
+        <button id="start-btn" disabled>Comprobando...</button>
+        <div id="console"></div>
+    </div>
+
+    <video id="fallback-video" autoplay playsinline muted hidden></video>
+    <canvas id="webgl-canvas"></canvas>
 
 <script>
-const logEl = document.getElementById('log');
-const fullLog = [];
-function log(msg, cls){
-  const line = document.createElement('div');
-  if(cls) line.className = cls;
-  const t = new Date().toLocaleTimeString();
-  fullLog.push(`[${t}] ${msg}`);
-  const short = msg.length > 90 ? msg.slice(0, 90) + '…' : msg;
-  line.textContent = `[${t}] ${short}`;
-  logEl.appendChild(line);
-  logEl.scrollTop = logEl.scrollHeight;
-  console.log(msg);
-}
-document.getElementById('copyBtn').onclick = async ()=>{
-  const text = fullLog.join('\n') || '(vacío)';
-  try{
-    await navigator.clipboard.writeText(text);
-    document.getElementById('copyBtn').textContent = '✅ Copiado';
-  }catch(e){
-    // fallback: show it in a prompt-like selectable box so it can be copied manually
-    const box = document.createElement('textarea');
-    box.value = text;
-    box.style.cssText = 'width:100%;height:120px;margin-top:8px;background:#000;color:#7ccf3a;font:inherit';
-    document.getElementById('ui').appendChild(box);
-    box.select();
-  }
-  setTimeout(()=>{ document.getElementById('copyBtn').textContent = '📋 Copiar log'; }, 2000);
-};
+    const logEl = document.getElementById('console');
+    const startBtn = document.getElementById('start-btn');
+    const canvas = document.getElementById('webgl-canvas');
+    const video = document.getElementById('fallback-video');
+    
+    function log(msg, isError = false) {
+        const div = document.createElement('div');
+        div.style.color = isError ? '#ff5a3c' : '#7ccf3a';
+        div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        logEl.appendChild(div);
+        logEl.scrollTop = logEl.scrollHeight;
+        console.log(msg);
+    }
 
-log('navigator.xr existe: ' + (!!navigator.xr), navigator.xr ? 'ok' : 'err');
-
-if(!navigator.xr){
-  log('Este navegador no expone WebXR. En iPhone/Safari esto siempre será así.', 'err');
-} else {
-  navigator.xr.isSessionSupported('immersive-ar').then(ok=>{
-    log('¿Soporta immersive-ar con hit-test? ' + ok, ok ? 'ok' : 'err');
-    if(ok){
-      document.getElementById('arBtn').disabled = false;
-      document.getElementById('arBtn').textContent = 'Probar AR';
+    // 1. Verificar soporte WebXR
+    if (!navigator.xr) {
+        log('WebXR no está disponible en este navegador.', true);
+        startBtn.textContent = 'Sin soporte WebXR';
     } else {
-      document.getElementById('arBtn').textContent = 'AR no soportado en este navegador';
-      log('Prueba en Chrome (no en un navegador dentro de otra app) y confirma que tienes "ARCore" instalado desde Play Store.', 'info');
+        navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
+            if (supported) {
+                log('Soporte nativo "immersive-ar" DETECTADO.');
+                startBtn.disabled = false;
+                startBtn.textContent = 'Iniciar AR Puro';
+            } else {
+                log('El navegador tiene WebXR pero no soporta RA de inmersión.', true);
+                startBtn.textContent = 'RA no soportada';
+            }
+        }).catch(err => log('Error al validar soporte: ' + err.message, true));
     }
-  }).catch(e=>{
-    log('Error comprobando soporte: ' + e.name + ' — ' + e.message, 'err');
-  });
-}
 
-function loadThree(){
-  return new Promise((res, rej)=>{
-    if(window.THREE) return res();
-    log('Cargando three.js desde cdnjs…');
-    const s = document.createElement('script');
-    s.src = 'https://cloudflare.com';
-    s.onload = ()=>{ log('three.js cargado OK', 'ok'); res(); };
-    s.onerror = (e)=>{ log('three.js NO cargó (red bloqueada, adblock, o CDN caído)', 'err'); rej(e); };
-    document.head.appendChild(s);
-  });
-}
+    startBtn.onclick = async () => {
+        startBtn.disabled = true;
+        log('Solicitando cámara tradicional de respaldo primero (forzar permisos)...');
+        
+        // Forzamos el acceso a la cámara vía web estándar para descartar bloqueos de hardware
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+            video.srcObject = stream;
+            video.hidden = false;
+            log('Cámara del sistema abierta con éxito en el fondo.', false);
+        } catch (e) {
+            log('No se pudo abrir la cámara de forma tradicional: ' + e.message, true);
+        }
 
-async function startAR(){
-  const canvas = document.getElementById('arCanvas');
-  const overlay = document.getElementById('arOverlay');
-  try{
-    await loadThree();
-  }catch(e){ return; }
+        log('Abriendo sesión WebXR...');
+        try {
+            // Solicitamos una sesión limpia sin features complejas
+            const session = await navigator.xr.requestSession('immersive-ar', {
+                optionalFeatures: ['dom-overlay'],
+                domOverlay: { root: document.getElementById('ui') }
+            });
+            
+            log('¡Sesión WebXR iniciada correctamente!', false);
+            
+            // Inicializar WebGL Puro (sin librerías)
+            const gl = canvas.getContext('webgl', { xrCompatible: true });
+            if (!gl) {
+                log('No se pudo crear el contexto WebGL compatible con XR.', true);
+                return;
+            }
 
-  canvas.hidden = false; overlay.hidden = false;
-  const renderer = new THREE.WebGLRenderer({canvas, alpha:true, antialias:true});
-  renderer.setClearColor(0x000000, 0);
-  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-  renderer.setSize(innerWidth, innerHeight);
-  renderer.xr.enabled = true;
-  log('Renderer WebGL creado', 'ok');
+            const xrLayer = new XRWebGLLayer(session, gl);
+            session.updateRenderState({ baseLayer: xrLayer });
+            
+            const refSpace = await session.requestReferenceSpace('local');
+            
+            // Bucle de renderizado nativo
+            const onXRFrame = (time, frame) => {
+                session.requestAnimationFrame(onXRFrame);
+                
+                const pose = frame.getViewerPose(refSpace);
+                if (pose) {
+                    gl.bindFramebuffer(gl.FRAMEBUFFER, xrLayer.framebuffer);
+                    
+                    // Limpiamos la pantalla asegurando transperencia total para ver la cámara
+                    gl.clearColor(0.0, 0.0, 0.0, 0.0); 
+                    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+                    
+                    // IMPORTANTE: Si la pantalla sigue negra aquí, el fallo es de ARCore (Android) 
+                    // comunicando los frames de la cámara hacia la capa WebGL de Chrome.
+                }
+            };
+            
+            session.requestAnimationFrame(onXRFrame);
+            session.addEventListener('end', () => log('Sesión AR finalizada.'));
 
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera();
-
-  const cube = new THREE.Mesh(
-    new THREE.BoxGeometry(.1,.1,.1),
-    new THREE.MeshBasicMaterial({color:0xff5a3c})
-  );
-  cube.visible = false;
-  scene.add(cube);
-
-  const reticle = new THREE.Mesh(
-    new THREE.RingGeometry(.06,.08,32).rotateX(-Math.PI/2),
-    new THREE.MeshBasicMaterial({color:0xb5f23d})
-  );
-  reticle.visible = false;
-  reticle.matrixAutoUpdate = false;
-  scene.add(reticle);
-
-  let hitTestSource = null, session = null, gotFirstHit = false;
-
-  function end(){
-    canvas.hidden = true; overlay.hidden = true;
-    renderer.setAnimationLoop(null);
-    try{ renderer.dispose(); }catch(e){}
-    log('Sesión AR terminada');
-  }
-
-  try{
-    log('Solicitando sesión immersive-ar…');
-    session = await navigator.xr.requestSession('immersive-ar', {
-      requiredFeatures: ['hit-test'],
-      optionalFeatures: ['dom-overlay'],
-      domOverlay: { root: overlay }
-    });
-    log('Sesión iniciada (permiso de cámara concedido)', 'ok');
-  }catch(e){
-    log('requestSession falló: ' + e.name + ' — ' + e.message, 'err');
-    log('Causas típicas: permiso de cámara denegado, o "hit-test" no soportado.', 'info');
-    return;
-  }
-
-  await renderer.xr.setSession(session);
-  const viewerSpace = await session.requestReferenceSpace('viewer');
-  hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
-  log('Hit-test source listo. Mueve el teléfono buscando una superficie.', 'ok');
-
-  session.addEventListener('select', ()=>{
-    if(reticle.visible){
-      cube.position.setFromMatrixPosition(reticle.matrix);
-      cube.visible = true;
-      log('Cubo colocado en la superficie', 'ok');
-    }
-  });
-  session.addEventListener('end', end);
-  document.getElementById('arExit').onclick = ()=>{
-    log('Tocaste Salir, cerrando sesión…');
-    const safety = setTimeout(()=>{ log('La sesión no cerró sola, forzando salida.', 'err'); end(); }, 1200);
-    Promise.resolve(session.end()).catch(e=>log('session.end() error: '+e.message,'err')).finally(()=>clearTimeout(safety));
-  };
-
-  renderer.setAnimationLoop((t, frame)=>{
-    if(frame && hitTestSource){
-      const refSpace = renderer.xr.getReferenceSpace();
-      const hits = frame.getHitTestResults(hitTestSource);
-      if(hits.length){
-        if(!gotFirstHit){ gotFirstHit = true; log('¡Superficie detectada!', 'ok'); }
-        reticle.visible = true;
-        reticle.matrix.fromArray(hits[0].getPose(refSpace).transform.matrix);
-      } else {
-        reticle.visible = false;
-      }
-    }
-    renderer.clear(); // Fuerza el borrado con el canal Alpha configurado en 0
-    renderer.render(scene, camera);
-  });
-}
-
-document.getElementById('arBtn').onclick = startAR;
+        } catch (err) {
+            log('Fallo crítico al iniciar sesión XR: ' + err.message, true);
+            startBtn.disabled = false;
+        }
+    };
 </script>
-</body></html>
+</body>
+</html>
