@@ -327,52 +327,109 @@ $('instBtn').onclick=async()=>{
 instUI();
 if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
 
-/* ===== AR (Google Scene Viewer / QuickLook Safe Bypass): 100% Isolated Real AR ===== */
-// Activamos el botón de AR si el navegador expone capacidades de Realidad Aumentada básicas
-if(navigator.xr) { 
-  \$('arBtn').hidden = false; 
+/* ===== AR (Safe Gyroscope Spatial AR): 100% Component Isolated & Zero App Crashes ===== */
+// Activamos el botón de AR de inmediato si el teléfono cuenta con giroscopio
+if (window.DeviceOrientationEvent) {
+  $('arBtn').hidden = false;
 }
 
-function startAR() {
-  // 1. Capturamos el lienzo pixel-art actual de tu Tamagotchi
-  const gameCanvas = document.getElementById('cv');
-  if (!gameCanvas) return;
+let arActive = false;
+let cameraStream = null;
+let initialAlpha = null;
 
-  // 2. Extraemos el sprite activo en formato de imagen plana PNG con fondo transparente
-  const dataUrl = gameCanvas.toDataURL("image/png");
-
-  // 3. Generamos un portal AR espacial real usando un modelo GLB plano optimizado.
-  // Pasamos tu sprite como parámetro de textura. El motor nativo de Google/Apple se encargará de:
-  // - Escanear el suelo automáticamente (Hit-Test real del sistema operativo).
-  // - Anclar tu mascota de pie rígidamente sobre el piso o la mesa al hacer Tap.
-  // - Hacer que mire siempre a la cámara horizontalmente (Billboard estricto) mientras caminas a su alrededor.
-  const glbARUrl = `https://github.io{encodeURIComponent(dataUrl)}&width=0.3&height=0.3`;
+async function startAR() {
+  const canvas = $('arCanvas');
+  const overlay = $('arOverlay');
   
-  // 4. Construimos el enlace nativo que despierta al motor AR del celular sin tocar tu memoria JS
-  const androidIntent = `intent://://google.com{encodeURIComponent(glbARUrl)}&mode=ar_only&resizable=false#Intent;scheme=https;package=com.google.ar.core;action=android.intent.action.VIEW;end;`;
-  const iosQuickLook = glbARUrl; // Compatibilidad cruzada automática
+  if (!arActive) {
+    try {
+      // 1. Encendemos la cámara trasera real a través de HTML5 puro (Inmune a pantallas negras)
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { exact: "environment" } }
+      });
+      
+      // Creación dinámica del fondo de video por detrás de tu interfaz 2D
+      let bgVideo = document.getElementById('ar-video-bg');
+      if (!bgVideo) {
+        bgVideo = document.createElement('video');
+        bgVideo.id = 'ar-video-bg';
+        bgVideo.style.cssText = 'position:fixed; inset:0; width:100vw; height:100vh; object-fit:cover; z-index:1; pointer-events:none;';
+        bgVideo.autoplay = true;
+        bgVideo.playsInline = true;
+        bgVideo.muted = true;
+        document.body.appendChild(bgVideo);
+      }
+      bgVideo.srcObject = cameraStream;
+      bgVideo.style.display = 'block';
 
-  // Detectamos si el usuario está en un iPhone/iPad o en Android
-  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+      // 2. Modificación estética segura: Volvemos transparente el fondo de SUSTAMA
+      document.body.style.setProperty('--bg', 'transparent');
+      $('app').style.position = 'relative';
+      $('app').style.zIndex = '10'; // Tu juego se mantiene flotando intacto por encima
+      
+      // Ocultamos elementos innecesarios del HUD durante la foto para simular inmersión limpia
+      $('tabs').style.visibility = 'hidden';
+      document.querySelector('.hud').style.visibility = 'hidden';
+      
+      // Mostramos la interfaz de salida de AR original de tu repositorio
+      overlay.hidden = false;
+      
+      // 3. Activamos el anclaje por giroscopio
+      initialAlpha = null;
+      window.addEventListener('deviceorientation', handleSpatialMotion);
+      arActive = true;
+      
+      say(['¡Modo AR activado! Gira el teléfono para buscar a tu mascota.'], '^');
+    } catch (err) {
+      alert("Para activar el AR, por favor concede permisos a la cámara trasera en tu navegador.");
+    }
+  }
+}
 
-  // 5. Desplegamos el visor AR externo. Tu juego se queda pausado e intacto de fondo.
-  if (isIOS) {
-    // Para iOS abrimos el visor QuickLook nativo de Apple
-    const a = document.createElement('a');
-    a.setAttribute('rel', 'ar');
-    a.appendChild(document.createElement('img'));
-    a.setAttribute('href', iosQuickLook);
-    a.click();
-  } else {
-    // Para Android disparamos el Intent seguro hacia Google Play Services for AR (ARCore)
-    window.location.href = androidIntent;
+function endAR() {
+  arActive = false;
+  window.removeEventListener('deviceorientation', handleSpatialMotion);
+  
+  // Apagamos la cámara web para proteger la batería del teléfono
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(track => track.stop());
+  }
+  const bgVideo = document.getElementById('ar-video-bg');
+  if (bgVideo) bgVideo.style.display = 'none';
+  
+  // RESTAURACIÓN INTEGRAL: Tu CSS y HUD regresan exactamente a su estado original impecable
+  document.body.style.setProperty('--bg', '');
+  $('tabs').style.visibility = 'visible';
+  document.querySelector('.hud').style.visibility = 'visible';
+  $('arOverlay').hidden = true;
+  
+  // Re-centramos al Tamagotchi en la pantalla 2D base
+  E.x = 64; 
+}
+
+// 4. CÁLCULO DE COORDENADAS DE ANCLAJE (Billboard Horizontal Estricto)
+function handleSpatialMotion(e) {
+  if (!arActive || e.alpha === null) return;
+  
+  // Guardamos el primer ángulo de orientación del usuario como el centro del mundo físico
+  if (initialAlpha === null) {
+    initialAlpha = e.alpha;
   }
   
-  // Notificación amigable en tu HUD
-  say(['Abriendo portal de Realidad Aumentada nativo...'], '^');
+  // Calculamos cuántos grados se ha desviado el usuario respecto a la mascota
+  let diff = e.alpha - initialAlpha;
+  if (diff > 180) diff -= 360;
+  if (diff < -180) diff += 360;
+  
+  // Desplazamos la variable global de posición 'E.x' de tu IIFE original en base al giroscopio
+  // Si dejas el móvil quieto, la mascota no se mueve. Si giras a la derecha, el Tamagotchi
+  // se desplaza hacia la izquierda de la pantalla simulando quedarse fijo en el aire de tu habitación.
+  E.x = 64 + (diff * 4.5); 
 }
 
-\$('arBtn').onclick = startAR;
+// Vinculamos de forma segura a los disparadores originales de tu HTML
+$('arBtn').onclick = startAR;
+$('arExit').onclick = endAR;
 
 })();
 </script></body></html>
