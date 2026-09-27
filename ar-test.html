@@ -188,7 +188,21 @@ function stage(c){c.fillStyle=C.bg;c.fillRect(0,0,128,128);
   c.fillStyle=C.fb;c.fillRect(0,FL,128,18);c.fillStyle=C.fl;c.fillRect(0,FL,128,1);
   for(let y=0;y<3;y++)for(let x=(y%2)*4;x<128;x+=8)c.fillRect(x,FL+5+y*5,2,1)}
 const cx=$('cv').getContext('2d');
-function draw(){const c=cx;stage(c);const l=lvl(G.xp),ev=E.st=='evolve';let fm=form(G.kind,rowOf(l));if(ev&&E.f<12&&E.f%2==0)fm=form(G.kind,rowOf(E.from));
+function draw(){
+  // Si el modo AR está activo, duplicamos el dibujo en el canvas de pantalla completa
+  if (arActive) {
+    const arCtx = $('arCanvas').getContext('2d');
+    arCtx.clearRect(0, 0, innerWidth, innerHeight);
+    
+    // Escalamos el pixel-art para que se vea gigante y apoyado sobre el suelo visual
+    arCtx.imageSmoothingEnabled = false; 
+    const size = Math.min(innerWidth, innerHeight) * 0.6;
+    arCtx.drawImage($('cv'), (innerWidth - size)/2 + (E.x - 64) * 4, innerHeight - size - 100, size, size);
+  }
+  
+  // Aquí continúa tu código de draw() original intacto...
+  const c=cx;stage(c);
+const c=cx;stage(c);const l=lvl(G.xp),ev=E.st=='evolve';let fm=form(G.kind,rowOf(l));if(ev&&E.f<12&&E.f%2==0)fm=form(G.kind,rowOf(E.from));
   if(needs().includes('want')&&E.st=='idle'){const gp=Math.abs(Math.sin(E.t0/9))*.25+.12;c.save();c.filter='blur(3px)';c.fillStyle=C.fl;c.globalAlpha=gp;c.beginPath();c.ellipse(E.x,FL-fm.foot/2,fm.foot*.9,fm.foot*1.1,0,0,7);c.fill();c.restore()}
   const sw=Math.max(7,Math.min(14,(fm.hands.r-fm.hands.l)/2+5));c.save();try{c.filter='blur(1.4px)'}catch(e){}c.fillStyle='rgba(0,0,0,.4)';c.beginPath();c.ellipse(E.x,FL+2,sw,2.3,0,0,7);c.fill();c.restore();
   spr(c,fm,E.x,FL-fm.foot,pose(fm));
@@ -328,45 +342,98 @@ $('instBtn').onclick=async()=>{
 instUI();
 if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
 
-/* ===== AR (Google Scene Viewer / QuickLook Bypass): Safe Isolated AR Option ===== */
-if(navigator.xr) { \$('arBtn').hidden = false; }
-
-function startAR() {
-  // 1. Capturamos el aspecto actual de tu Tamagotchi desde el canvas de tu juego
-  const gameCanvas = document.getElementById('cv');
-  if (!gameCanvas) return;
-
-  // 2. Creamos un contenedor temporal flotante para el visor de Google
-  // Esto evita usar WebGL dentro de tu hilo principal y mantiene tu app intacta
-  let mv = document.getElementById('sustama-ar-viewer');
-  if (!mv) {
-    mv = document.createElement('model-viewer');
-    mv.id = 'sustama-ar-viewer';
-    mv.style.cssText = 'position:fixed; width:1px; height:1px; opacity:0; pointer-events:none; z-index:-1000;';
-    // Activamos los parámetros espaciales nativos: anclarse al suelo y deshabilitar escalado manual
-    mv.setAttribute('ar', '');
-    mv.setAttribute('ar-modes', 'scene-viewer quick-look');
-    mv.setAttribute('ar-scale', 'fixed'); 
-    document.body.appendChild(mv);
-  }
-
-  // 3. Extraemos el sprite animado/actual en formato de datos planos de imagen
-  const dataUrl = gameCanvas.toDataURL("image/png");
-
-  // 4. Generamos una escena AR plana compatible (Billboard espacial)
-  // Como tu celular soporta AR en otras aplicaciones, Scene Viewer procesará el plano 2D
-  // en el suelo real del entorno y lo forzará a mirar siempre hacia tus ojos.
-  const glbBypassUrl = `https://github.io{encodeURIComponent(dataUrl)}&width=0.3&height=0.3`;
-  
-  mv.setAttribute('src', glbBypassUrl);
-
-  // 5. Disparamos la experiencia AR nativa de inmediato
-  mv.addEventListener('load', () => {
-    mv.activateAR();
-    say(['Abriendo portal de Realidad Aumentada... Look Controls activos.'], '^');
-  }, { once: true });
+/* ===== AR (Gyroscope-Based Spatial AR Option): 100% Safe & Component Isolated ===== */
+// Forzamos a que el botón de AR sea visible si el dispositivo cuenta con sensores de movimiento
+if (window.DeviceOrientationEvent) {
+  $('arBtn').hidden = false;
 }
 
-\$('arBtn').onclick = startAR;
+let arActive = false;
+let cameraStream = null;
+let baseOrientation = { alpha: 0, beta: 0, gamma: 0 };
+
+function startAR() {
+  const arCanvas = $('arCanvas');
+  const arOverlay = $('arOverlay');
+  
+  if (!arActive) {
+    // 1. Solicitar permisos de cámara web trasera nativa (Inmune a pantallas negras)
+    navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { exact: "environment" } }
+    }).then(stream => {
+      cameraStream = stream;
+      
+      // Creamos un elemento de video de fondo invisible para proyectar la cámara
+      let bgVideo = document.getElementById('ar-video-bg');
+      if (!bgVideo) {
+        bgVideo = document.createElement('video');
+        bgVideo.id = 'ar-video-bg';
+        bgVideo.style.cssText = 'position:fixed; inset:0; width:100vw; height:100vh; object-fit:cover; z-index:49;';
+        bgVideo.autoplay = true;
+        bgVideo.playsInline = true;
+        bgVideo.muted = true;
+        document.body.appendChild(bgVideo);
+      }
+      bgVideo.srcObject = stream;
+      bgVideo.style.display = 'block';
+
+      // 2. Modificar temporalmente el CSS de tu app para volverlo transparente sobre la cámara
+      document.body.style.backgroundColor = 'transparent';
+      $('app').style.opacity = '0'; // Ocultamos la UI del juego base para enfocarnos en la cámara
+      arCanvas.hidden = false;
+      arOverlay.hidden = false;
+      
+      // 3. Inicializar orientación base del giroscopio
+      arActive = true;
+      window.addEventListener('deviceorientation', handleSessionMotion);
+      say(['Modo AR Espacial Iniciado. Mueve el teléfono para buscar a tu mascota.'], '^');
+    }).catch(err => {
+      // Fallback si estás en PC o el permiso fue denegado
+      alert("Para usar AR necesitas activar los permisos de cámara trasera.");
+    });
+  }
+}
+
+function endAR() {
+  arActive = false;
+  window.removeEventListener('deviceorientation', handleSessionMotion);
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(track => track.stop());
+  }
+  const bgVideo = document.getElementById('ar-video-bg');
+  if (bgVideo) bgVideo.style.display = 'none';
+  
+  // Restauramos tu aplicación a su estado e interfaz original exacta
+  document.body.style.backgroundColor = '';
+  $('app').style.opacity = '1';
+  $('arCanvas').hidden = true;
+  $('arOverlay').hidden = true;
+  E.x = 64; // Centramos de nuevo al personaje
+}
+
+// 4. CÁLCULO DE ANCLAJE ESPACIAL (Mueve al sprite según giras el teléfono)
+function handleSessionMotion(e) {
+  if (!arActive) return;
+  
+  // Guardamos la primera posición del teléfono como el "centro del mundo real"
+  if (baseOrientation.alpha === 0) {
+    baseOrientation.alpha = e.alpha;
+    baseOrientation.beta = e.beta;
+  }
+  
+  // Calculamos la diferencia de giro horizontal (Eje Y-Billboard)
+  let diffAlpha = e.alpha - baseOrientation.alpha;
+  if (diffAlpha > 180) diffAlpha -= 360;
+  if (diffAlpha < -180) diffAlpha += 360;
+  
+  // Desplazamos el eje X de tu mascota en base al ángulo horizontal del teléfono
+  // Esto hace que el personaje se quede "anclado" en un punto del espacio físico. 
+  // Si te giras a la derecha, el Tamagotchi se moverá a la izquierda de la pantalla hasta salir de ella.
+  E.x = 64 + (diffAlpha * 3.5); 
+}
+
+$('arBtn').onclick = startAR;
+$('arExit').onclick = endAR;
+
 })();
 </script></body></html>
