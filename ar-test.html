@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>SUSTAMA AR — Cubo 3D Funcional</title>
+    <title>SUSTAMA — AR Espacial Real (2D Sprite)</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: transparent; font-family: monospace; }
         #overlay { position: fixed; inset: 0; z-index: 10; pointer-events: none; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; padding: 30px; }
@@ -22,6 +22,10 @@
     let gl = null;
     let shaderProgram = null;
     let vertexBuffer = null;
+    let petTexture = null;
+
+    // URL del Sprite de tu Tamagotchi (Usa una con fondo transparente PNG)
+    const SPRITE_URL = "https://wikimedia.org";
 
     if (navigator.xr) {
         navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
@@ -51,8 +55,9 @@
         const canvas = document.createElement('canvas');
         gl = canvas.getContext('webgl', { xrCompatible: true });
 
-        // Inicializamos los gráficos 3D nativos
+        // Inicializamos los Shaders y la Textura del Sprite
         initGLObjects();
+        loadPetTexture(SPRITE_URL);
 
         xrSession.updateRenderState({ baseLayer: new XRWebGLLayer(xrSession, gl) });
         
@@ -66,27 +71,31 @@
         });
     }
 
-    // Código nativo para construir un Cubo 3D en la GPU
     function initGLObjects() {
+        // Sombreador de vértices: Proyecta el plano en coordenadas tridimensionales reales
         const vsSource = `
             attribute vec3 position;
-            attribute vec3 color;
-            varying vec3 vColor;
+            attribute vec2 texCoord;
+            varying vec2 vTexCoord;
             uniform mat4 uProjectionMatrix;
             uniform mat4 uViewMatrix;
             void main() {
-                vColor = color;
-                // Posicionamos el objeto un poco hacia abajo y al frente (Z = -0.6 metros)
-                vec3 offsetPos = position + vec3(0.0, -0.2, -0.6);
+                vTexCoord = texCoord;
+                // Anclamos al Tamagotchi a medio metro de distancia al frente (Z = -0.5 metros)
+                vec3 offsetPos = position + vec3(0.0, -0.1, -0.5);
                 gl_Position = uProjectionMatrix * uViewMatrix * vec4(offsetPos, 1.0);
             }
         `;
 
+        // Sombreador de fragmentos: Renderiza los píxeles de tu imagen respetando transparencias
         const fsSource = `
             precision mediump float;
-            varying vec3 vColor;
+            varying vec2 vTexCoord;
+            uniform sampler2D uTexture;
             void main() {
-                gl_FragColor = vec4(vColor, 1.0);
+                vec4 texColor = texture2D(uTexture, vTexCoord);
+                if(texColor.a < 0.1) discard; // Descarta el fondo transparente del PNG
+                gl_FragColor = texColor;
             }
         `;
 
@@ -103,21 +112,35 @@
         gl.attachShader(shaderProgram, fs);
         gl.linkProgram(shaderProgram);
 
-        // Vértices y colores del cubo (Formato: X, Y, Z, R, G, B)
+        // Geometría de un plano 2D en espacio 3D (X, Y, Z, U, V)
         const vertices = new Float32Array([
-            -0.1,-0.1, 0.1,  1,0,0,   0.1,-0.1, 0.1,  1,0,0,   0.1, 0.1, 0.1,  1,0,0,
-            -0.1,-0.1, 0.1,  1,0,0,   0.1, 0.1, 0.1,  1,0,0,  -0.1, 0.1, 0.1,  1,0,0,
-            -0.1,-0.1,-0.1,  0,1,0,  -0.1, 0.1,-0.1,  0,1,0,   0.1, 0.1,-0.1,  0,1,0,
-            -0.1,-0.1,-0.1,  0,1,0,   0.1, 0.1,-0.1,  0,1,0,   0.1,-0.1,-0.1,  0,1,0,
-            -0.1, 0.1,-0.1,  0,0,1,  -0.1, 0.1, 0.1,  0,0,1,   0.1, 0.1, 0.1,  0,0,1,
-            -0.1, 0.1,-0.1,  0,0,1,   0.1, 0.1, 0.1,  0,0,1,   0.1, 0.1,-0.1,  0,0,1,
-            -0.1,-0.1,-0.1,  1,1,0,   0.1,-0.1,-0.1,  1,1,0,   0.1,-0.1, 0.1,  1,1,0,
-            -0.1,-0.1,-0.1,  1,1,0,   0.1,-0.1, 0.1,  1,1,0,  -0.1,-0.1, 0.1,  1,1,0
+            -0.15, -0.15,  0.0,   0.0, 1.0,
+             0.15, -0.15,  0.0,   1.0, 1.0,
+             0.15,  0.15,  0.0,   1.0, 0.0,
+            -0.15, -0.15,  0.0,   0.0, 1.0,
+             0.15,  0.15,  0.0,   1.0, 0.0,
+            -0.15,  0.15,  0.0,   0.0, 0.0,
         ]);
 
         vertexBuffer = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+    }
+
+    function loadPetTexture(url) {
+        petTexture = gl.createTexture();
+        const image = new Image();
+        image.crossOrigin = "anonymous";
+        image.src = url;
+        image.onload = () => {
+            gl.bindTexture(gl.TEXTURE_2D, petTexture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            // Conservamos el pixelado nítido si tus sprites son Pixel Art
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        };
     }
 
     function onXRFrame(time, frame, refSpace) {
@@ -129,6 +152,10 @@
             let glLayer = session.renderState.baseLayer;
             gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);
 
+            // Activamos mezcla de transparencias para que el sprite no tenga un recuadro blanco/negro
+            gl.enable(gl.BLEND);
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
             gl.clearColor(0, 0, 0, 0);
             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
@@ -137,25 +164,27 @@
 
             const positionLoc = gl.getAttribLocation(shaderProgram, 'position');
             gl.enableVertexAttribArray(positionLoc);
-            gl.vertexAttribPointer(positionLoc, 3, gl.FLOAT, false, 24, 0);
+            gl.vertexAttribPointer(positionLoc, 3, gl.FLOAT, false, 20, 0);
 
-            const colorLoc = gl.getAttribLocation(shaderProgram, 'color');
-            gl.enableVertexAttribArray(colorLoc);
-            gl.vertexAttribPointer(colorLoc, 3, gl.FLOAT, false, 24, 12);
+            const texCoordLoc = gl.getAttribLocation(shaderProgram, 'texCoord');
+            gl.enableVertexAttribArray(texCoordLoc);
+            gl.vertexAttribPointer(texCoordLoc, 2, gl.FLOAT, false, 20, 12);
+
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, petTexture);
+            gl.uniform1i(gl.getUniformLocation(shaderProgram, 'uTexture'), 0);
 
             for (let view of pose.views) {
                 let viewport = glLayer.getViewport(view);
                 gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
 
-                // Pasamos las matrices de la cámara física directo al motor 3D
                 const pMatrixLoc = gl.getUniformLocation(shaderProgram, 'uProjectionMatrix');
                 gl.uniformMatrix4fv(pMatrixLoc, false, view.projectionMatrix);
 
                 const vMatrixLoc = gl.getUniformLocation(shaderProgram, 'uViewMatrix');
                 gl.uniformMatrix4fv(vMatrixLoc, false, view.transform.inverse.matrix);
 
-                // Pintamos los triángulos del cubo
-                gl.drawArrays(gl.TRIANGLES, 0, 24);
+                gl.drawArrays(gl.TRIANGLES, 0, 6);
             }
         }
     }
