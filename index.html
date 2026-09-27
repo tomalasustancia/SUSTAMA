@@ -326,7 +326,6 @@ $('instBtn').onclick=async()=>{
 };
 instUI();
 if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
-
 /* ===== AR (WebXR hit-test, Android/Chrome only): places the live pixel-art sprite on a real surface ===== */
 if(navigator.xr&&navigator.xr.isSessionSupported){navigator.xr.isSessionSupported('immersive-ar').then(ok=>{if(ok)$('arBtn').hidden=false}).catch(()=>{})}
 
@@ -416,6 +415,5 @@ async function startAR(){
   });
 }
 $('arBtn').onclick=startAR;
-
 })();
 </script></body></html>
