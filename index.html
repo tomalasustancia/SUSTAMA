@@ -307,15 +307,23 @@ function setTheme(t){TN=t;C=TH[t];FC={};G.theme=t;document.body.className=t;save
 $('cv').onclick=()=>act('play');$('dlg').onclick=adv;$('xpChip').onclick=()=>tab('prog');$('gainsChip').onclick=()=>tab('shop');addEventListener('resize',fit);
 TK.disc=G.plan[new Date().getDay()]||'gym';setTheme(G.theme in TH?G.theme:'light');tab('tama');if(!G.onb)onb();mu();fit();ui();draw();setInterval(tick,TICK);E.tn=thirsty()?1:0;setTimeout(()=>{const n=needs();if(n.length&&G.onb)say(needMsgs(),n[0]=='want'?'o':'-')},500);
 window.SUS={G,E,TK,tab,act,sfx,prog,onb,say,needs,setXP,form,draw,montage(){const m=document.createElement('canvas');m.width=250;m.height=215;const c=m.getContext('2d');c.fillStyle=C.bg;c.fillRect(0,0,250,215);E.st='idle';E.auto='stand';['cat','round','notch','robot'].forEach((k,i)=>[1,2,3,4].forEach(r=>{const fm=form(k,r);spr(c,fm,30+i*60,r*50-fm.foot,{})}));return m.toDataURL()}}
-/* ===== PWA: install button (Android/Chrome prompt, iOS manual instructions) + service worker ===== */
-let deferredPrompt=null;
+/* ===== PWA: install button (Android/Chrome real prompt, iOS manual instructions) + service worker ===== */
+let deferredPrompt=null,wantsInstall=false;
 const isStandalone=()=>matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
-function instUI(){const b=$('instBtn');if(!b)return;if(isStandalone()){b.textContent='App instalada ✓';b.disabled=true}else{b.textContent='Instalar app';b.disabled=false}}
-addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;instUI()});
-addEventListener('appinstalled',()=>{deferredPrompt=null;instUI()});
-$('instBtn').onclick=async()=>{if(deferredPrompt){deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;instUI()}
-  else if(/iphone|ipad|ipod/i.test(navigator.userAgent))say(['Para instalar: toca el botón Compartir de Safari y elige "Agregar a inicio".'],'^');
-  else say(['Para instalar: abre el menú del navegador y busca "Instalar app" o "Agregar a pantalla de inicio".'],'^')};
+const isIOS=()=>/iphone|ipad|ipod/i.test(navigator.userAgent);
+function instUI(){const b=$('instBtn');if(!b)return;
+  if(isStandalone()){b.textContent='App instalada ✓';b.disabled=true}
+  else if(deferredPrompt){b.textContent='Instalar app';b.disabled=false}
+  else if(isIOS()){b.textContent='Cómo instalar (iOS)';b.disabled=false}
+  else{b.textContent='Instalar app';b.disabled=false}}
+addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;instUI();if(wantsInstall){wantsInstall=false;deferredPrompt.prompt()}});
+addEventListener('appinstalled',()=>{deferredPrompt=null;wantsInstall=false;instUI()});
+$('instBtn').onclick=async()=>{
+  if(deferredPrompt){const p=deferredPrompt;deferredPrompt=null;p.prompt();await p.userChoice;instUI();return}
+  if(isIOS()){say(['Para instalar: toca el botón Compartir de Safari (el cuadrado con flecha ↑) y elige "Agregar a inicio".'],'^');return}
+  wantsInstall=true;
+  say(['Preparando la instalación… si no aparece el diálogo en unos segundos, este navegador aún no la ofrece (Chrome a veces espera un poco después de desinstalar). Vuelve a intentar en un momento, o usa el menú ⋮ → "Instalar app".'],'-');
+};
 instUI();
 if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
 
@@ -323,7 +331,7 @@ if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWor
 if(navigator.xr&&navigator.xr.isSessionSupported){navigator.xr.isSessionSupported('immersive-ar').then(ok=>{if(ok)$('arBtn').hidden=false}).catch(()=>{})}
 function loadThree(){return new Promise((res,rej)=>{if(window.THREE)return res();const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/three.js/128/three.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s)})}
 async function startAR(){
-  try{await loadThree()}catch(e){say(['No se pudo cargar el modo AR. Revisa tu conexión.'],'-');return}
+  try{await loadThree()}catch(e){console.error('AR: three.js load failed',e);say(['No se pudo cargar el componente de AR (no es necesariamente tu conexión: puede ser un bloqueador de anuncios/rastreadores). Intenta de nuevo, o desactiva bloqueadores para este sitio.'],'-');return}
   const canvas=$('arCanvas');canvas.hidden=false;$('arOverlay').hidden=false;
   const renderer=new THREE.WebGLRenderer({canvas,alpha:true,antialias:true});
   renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);renderer.xr.enabled=true;
@@ -337,7 +345,7 @@ async function startAR(){
   function end(){canvas.hidden=true;$('arOverlay').hidden=true;renderer.setAnimationLoop(null);try{renderer.dispose()}catch(e){}}
   try{
     session=await navigator.xr.requestSession('immersive-ar',{requiredFeatures:['hit-test'],optionalFeatures:['dom-overlay'],domOverlay:{root:$('arOverlay')}});
-  }catch(e){say(['Tu dispositivo no pudo iniciar AR. Necesitas Chrome en Android compatible con ARCore.'],'-');end();return}
+  }catch(e){console.error('AR: requestSession failed',e);say(['No se pudo iniciar la cámara para AR. Revisa que le diste permiso de cámara a este sitio, y que ningún otro app la esté usando.'],'-');end();return}
   await renderer.xr.setSession(session);
   const viewerSpace=await session.requestReferenceSpace('viewer');
   hitTestSource=await session.requestHitTestSource({space:viewerSpace});
