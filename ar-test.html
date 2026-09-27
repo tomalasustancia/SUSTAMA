@@ -327,28 +327,25 @@ $('instBtn').onclick=async()=>{
 instUI();
 if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
 
-/* ===== AR (Safe Gyroscope Spatial AR): 100% Component Isolated & Zero App Crashes ===== */
-// Activamos el botón de AR de inmediato si el teléfono cuenta con giroscopio
+/* ===== AR (Safe 3D Software Spatial AR): 100% Stable & Dependedless ===== */
 if (window.DeviceOrientationEvent) {
-  $('arBtn').hidden = false;
+  \$('arBtn').hidden = false;
 }
 
 let arActive = false;
 let cameraStream = null;
-let initialAlpha = null;
+let initialOrientation = null;
 
 async function startAR() {
-  const canvas = $('arCanvas');
-  const overlay = $('arOverlay');
+  const overlay = \$('arOverlay');
   
   if (!arActive) {
     try {
-      // 1. Encendemos la cámara trasera real a través de HTML5 puro (Inmune a pantallas negras)
+      // 1. Encendemos la cámara trasera nativa sin usar WebXR (Cero pantallas negras)
       cameraStream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { exact: "environment" } }
       });
       
-      // Creación dinámica del fondo de video por detrás de tu interfaz 2D
       let bgVideo = document.getElementById('ar-video-bg');
       if (!bgVideo) {
         bgVideo = document.createElement('video');
@@ -362,74 +359,93 @@ async function startAR() {
       bgVideo.srcObject = cameraStream;
       bgVideo.style.display = 'block';
 
-      // 2. Modificación estética segura: Volvemos transparente el fondo de SUSTAMA
+      // 2. PARCHE DE TRANSPARENCIA: Forzamos a la caja central, el canvas y el fondo a ser transparentes
       document.body.style.setProperty('--bg', 'transparent');
-      $('app').style.position = 'relative';
-      $('app').style.zIndex = '10'; // Tu juego se mantiene flotando intacto por encima
-      
-      // Ocultamos elementos innecesarios del HUD durante la foto para simular inmersión limpia
-      $('tabs').style.visibility = 'hidden';
+      document.body.style.setProperty('--sf', 'transparent'); // Limpia el fondo blanco/oscuro de la caja central
+      \(('sw').style.background = 'transparent';\)('sw').style.border = 'none';
+      \(('cv').style.borderColor = 'transparent'; // Oculta el borde del cuadro del Tamagotchi\)('app').style.position = 'relative';
+      \(('app').style.zIndex = '10';              // Ocultamos el HUD temporalmente para ver la escena limpia de Realidad Aumentada\)('tabs').style.visibility = 'hidden';
       document.querySelector('.hud').style.visibility = 'hidden';
+      document.querySelector('.tapHint').style.visibility = 'hidden';
+      \$('statchips').style.visibility = 'hidden';
       
-      // Mostramos la interfaz de salida de AR original de tu repositorio
       overlay.hidden = false;
       
-      // 3. Activamos el anclaje por giroscopio
-      initialAlpha = null;
-      window.addEventListener('deviceorientation', handleSpatialMotion);
+      // 3. Inicializamos los sensores de movimiento
+      initialOrientation = null;
+      window.addEventListener('deviceorientation', handle3DSpatialMotion);
       arActive = true;
       
-      say(['¡Modo AR activado! Gira el teléfono para buscar a tu mascota.'], '^');
+      say(['¡Modo AR 3D iniciado! Mueve el teléfono para buscar la altura del suelo.'], '^');
     } catch (err) {
-      alert("Para activar el AR, por favor concede permisos a la cámara trasera en tu navegador.");
+      alert("Para activar el AR, concede permisos a la cámara trasera.");
     }
   }
 }
 
 function endAR() {
   arActive = false;
-  window.removeEventListener('deviceorientation', handleSpatialMotion);
+  window.removeEventListener('deviceorientation', handle3DSpatialMotion);
   
-  // Apagamos la cámara web para proteger la batería del teléfono
   if (cameraStream) {
     cameraStream.getTracks().forEach(track => track.stop());
   }
   const bgVideo = document.getElementById('ar-video-bg');
   if (bgVideo) bgVideo.style.display = 'none';
   
-  // RESTAURACIÓN INTEGRAL: Tu CSS y HUD regresan exactamente a su estado original impecable
-  document.body.style.setProperty('--bg', '');
-  $('tabs').style.visibility = 'visible';
+  // RESTAURACIÓN TOTAL: Regresamos los estilos CSS originales exactos de tu tema
+  document.body.style.removeProperty('--bg');
+  document.body.style.removeProperty('--sf');
+  \(('sw').style.background = '';\)('sw').style.border = '';
+  \(('cv').style.borderColor = '';\)('tabs').style.visibility = 'visible';
   document.querySelector('.hud').style.visibility = 'visible';
-  $('arOverlay').hidden = true;
+  document.querySelector('.tapHint').style.visibility = 'visible';
+  \(('statchips').style.visibility = 'visible';\)('arOverlay').hidden = true;
   
-  // Re-centramos al Tamagotchi en la pantalla 2D base
+  // Reseteamos las transformaciones de tu mascota
+  const cv = \$('cv');
+  cv.style.transform = '';
   E.x = 64; 
 }
 
-// 4. CÁLCULO DE COORDENADAS DE ANCLAJE (Billboard Horizontal Estricto)
-function handleSpatialMotion(e) {
-  if (!arActive || e.alpha === null) return;
+// 4. MATEMÁTICAS 3D NATIVAS (Anclaje al suelo, Profundidad y Billboard)
+function handle3DSpatialMotion(e) {
+  if (!arActive || e.alpha === null || e.beta === null || e.gamma === null) return;
   
-  // Guardamos el primer ángulo de orientación del usuario como el centro del mundo físico
-  if (initialAlpha === null) {
-    initialAlpha = e.alpha;
+  // Fijamos la posición inicial como el "punto cero" del mundo real
+  if (initialOrientation === null) {
+    initialOrientation = { alpha: e.alpha, beta: e.beta, gamma: e.gamma };
   }
   
-  // Calculamos cuántos grados se ha desviado el usuario respecto a la mascota
-  let diff = e.alpha - initialAlpha;
-  if (diff > 180) diff -= 360;
-  if (diff < -180) diff += 360;
+  // Ángulo Horizontal (Giro en círculos)
+  let diffAlpha = e.alpha - initialOrientation.alpha;
+  if (diffAlpha > 180) diffAlpha -= 360;
+  if (diffAlpha < -180) diffAlpha += 360;
   
-  // Desplazamos la variable global de posición 'E.x' de tu IIFE original en base al giroscopio
-  // Si dejas el móvil quieto, la mascota no se mueve. Si giras a la derecha, el Tamagotchi
-  // se desplaza hacia la izquierda de la pantalla simulando quedarse fijo en el aire de tu habitación.
-  E.x = 64 + (diff * 4.5); 
+  // Ángulo Vertical (Mirar hacia el piso o el techo)
+  let diffBeta = e.beta - initialOrientation.beta;
+  
+  // Ángulo de Alabeo (Inclinación lateral del teléfono)
+  let diffGamma = e.gamma - initialOrientation.gamma;
+
+  // Modificamos E.x para el desplazamiento horizontal dentro de tu bucle interno
+  E.x = 64 + (diffAlpha * 5.0); 
+
+  // Efecto de Profundidad 3D (Simular que está apoyado en el suelo):
+  // Al inclinar el teléfono hacia abajo (mirando al piso), la perspectiva cambia:
+  // Calculamos una escala y una altura vertical artificiales basadas en la inclinación real.
+  const distanceFactor = Math.max(0.5, 1.0 - (diffBeta * 0.015)); // Simula alejamiento/acercamiento
+  const verticalTranslation = diffBeta * 6.5; // Desplazamiento vertical en píxeles hacia el suelo aparente
+
+  // Aplicamos transformaciones CSS directamente sobre tu lienzo de dibujo de la mascota
+  // Rotamos en el eje Z inverso al alabeo del teléfono para lograr el efecto Billboard (siempre derecho ante ti)
+  const cv = \$('cv');
+  cv.style.transform = `translateY(${verticalTranslation}px) scale(${distanceFactor}) rotate(${-diffGamma}deg)`;
 }
 
-// Vinculamos de forma segura a los disparadores originales de tu HTML
-$('arBtn').onclick = startAR;
-$('arExit').onclick = endAR;
+\$('arBtn').onclick = startAR;
+\$('arExit').onclick = endAR;
+
 
 })();
 </script></body></html>
