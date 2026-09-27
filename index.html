@@ -43,8 +43,7 @@ body.retro .cal .day{border-radius:0}
 #arOverlay{position:fixed;inset:0;z-index:51;pointer-events:none}
 #arExit{position:fixed;top:calc(12px + env(safe-area-inset-top));right:12px;pointer-events:auto;background:rgba(0,0,0,.6);color:#fff;border:2px solid #fff}
 #arHint{position:fixed;left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom));text-align:center;background:rgba(0,0,0,.6);color:#fff;border-radius:10px;padding:8px 12px;font-size:12px;font-weight:600}
-</style><script type="module" src="https://googleapis.com"></script>
-</head><body><div id="app"><div class="top"><h1>SUSTAMA</h1><button id="arBtn" aria-label="Realidad Aumentada" hidden>AR</button><button id="coinBtn" aria-label="Tienda">₲<i class="dot"></i></button><button id="cfgBtn" aria-label="Configuración">⚙</button></div><div class="row sm" id="tabs"></div><div id="vt" style="display:contents"><div id="sw"><canvas id="cv" width="128" height="128"></canvas><div id="dlg" hidden role="status" aria-live="polite"><canvas id="dpt" width="28" height="28"></canvas><div id="dtx"></div><i id="dnx">▼</i></div><div id="statchips"><button id="xpChip" class="chip"></button><button id="gainsChip" class="chip"></button></div></div>
+</style></head><body><div id="app"><div class="top"><h1>SUSTAMA</h1><button id="arBtn" aria-label="Realidad Aumentada" hidden>AR</button><button id="coinBtn" aria-label="Tienda">₲<i class="dot"></i></button><button id="cfgBtn" aria-label="Configuración">⚙</button></div><div class="row sm" id="tabs"></div><div id="vt" style="display:contents"><div id="sw"><canvas id="cv" width="128" height="128"></canvas><div id="dlg" hidden role="status" aria-live="polite"><canvas id="dpt" width="28" height="28"></canvas><div id="dtx"></div><i id="dnx">▼</i></div><div id="statchips"><button id="xpChip" class="chip"></button><button id="gainsChip" class="chip"></button></div></div>
 <small class="tapHint">Toca a tu mascota para jugar</small>
 <div id="msg" class="sr"></div><div class="row" id="acts"></div><div class="row sm" id="sub"></div>
 <div class="hud"><div id="info"></div><div>XP <span id="xpt"></span><div class="bar"><i id="xpb"></i></div></div><div>Energía <span id="ent"></span><div class="bar"><i id="enb"></i></div></div></div>
@@ -328,45 +327,37 @@ $('instBtn').onclick=async()=>{
 instUI();
 if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
 
-/* ===== AR (Google Scene Viewer / QuickLook Bypass): Safe Isolated AR Option ===== */
-if(navigator.xr) { \$('arBtn').hidden = false; }
-
-function startAR() {
-  // 1. Capturamos el aspecto actual de tu Tamagotchi desde el canvas de tu juego
-  const gameCanvas = document.getElementById('cv');
-  if (!gameCanvas) return;
-
-  // 2. Creamos un contenedor temporal flotante para el visor de Google
-  // Esto evita usar WebGL dentro de tu hilo principal y mantiene tu app intacta
-  let mv = document.getElementById('sustama-ar-viewer');
-  if (!mv) {
-    mv = document.createElement('model-viewer');
-    mv.id = 'sustama-ar-viewer';
-    mv.style.cssText = 'position:fixed; width:1px; height:1px; opacity:0; pointer-events:none; z-index:-1000;';
-    // Activamos los parámetros espaciales nativos: anclarse al suelo y deshabilitar escalado manual
-    mv.setAttribute('ar', '');
-    mv.setAttribute('ar-modes', 'scene-viewer quick-look');
-    mv.setAttribute('ar-scale', 'fixed'); 
-    document.body.appendChild(mv);
-  }
-
-  // 3. Extraemos el sprite animado/actual en formato de datos planos de imagen
-  const dataUrl = gameCanvas.toDataURL("image/png");
-
-  // 4. Generamos una escena AR plana compatible (Billboard espacial)
-  // Como tu celular soporta AR en otras aplicaciones, Scene Viewer procesará el plano 2D
-  // en el suelo real del entorno y lo forzará a mirar siempre hacia tus ojos.
-  const glbBypassUrl = `https://github.io{encodeURIComponent(dataUrl)}&width=0.3&height=0.3`;
-  
-  mv.setAttribute('src', glbBypassUrl);
-
-  // 5. Disparamos la experiencia AR nativa de inmediato
-  mv.addEventListener('load', () => {
-    mv.activateAR();
-    say(['Abriendo portal de Realidad Aumentada... Look Controls activos.'], '^');
-  }, { once: true });
+/* ===== AR (WebXR hit-test, Android/Chrome only): places the live pixel-art sprite on a real surface ===== */
+if(navigator.xr&&navigator.xr.isSessionSupported){navigator.xr.isSessionSupported('immersive-ar').then(ok=>{if(ok)$('arBtn').hidden=false}).catch(()=>{})}
+function loadThree(){return new Promise((res,rej)=>{if(window.THREE)return res();const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s)})}
+async function startAR(){
+  try{await loadThree()}catch(e){console.error('AR: three.js load failed',e);say(['No se pudo cargar AR (puede ser un bloqueador). Intenta de nuevo.'],'-');return}
+  const canvas=$('arCanvas');canvas.hidden=false;$('arOverlay').hidden=false;
+  const renderer=new THREE.WebGLRenderer({canvas,alpha:true,antialias:true});
+  renderer.setClearColor(0x000000,0);
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);renderer.xr.enabled=true;
+  const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera();
+  const tex=new THREE.CanvasTexture($('cv'));tex.magFilter=THREE.NearestFilter;tex.minFilter=THREE.NearestFilter;
+  const sprite=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true}));
+  sprite.scale.set(.3,.3,1);sprite.visible=false;scene.add(sprite);
+  const reticle=new THREE.Mesh(new THREE.RingGeometry(.06,.08,32).rotateX(-Math.PI/2),new THREE.MeshBasicMaterial({color:0xb5f23d}));
+  reticle.visible=false;reticle.matrixAutoUpdate=false;scene.add(reticle);
+  let hitTestSource=null,session=null;
+  function end(){canvas.hidden=true;$('arOverlay').hidden=true;renderer.setAnimationLoop(null);try{renderer.dispose()}catch(e){}}
+  try{
+    session=await navigator.xr.requestSession('immersive-ar',{requiredFeatures:['hit-test'],optionalFeatures:['dom-overlay'],domOverlay:{root:$('arOverlay')}});
+  }catch(e){console.error('AR: requestSession failed',e);say(['No se pudo abrir la cámara. Revisa el permiso de cámara.'],'-');end();return}
+  await renderer.xr.setSession(session);
+  const viewerSpace=await session.requestReferenceSpace('viewer');
+  hitTestSource=await session.requestHitTestSource({space:viewerSpace});
+  session.addEventListener('select',()=>{if(reticle.visible){sprite.position.setFromMatrixPosition(reticle.matrix);sprite.visible=true}});
+  session.addEventListener('end',end);
+  $('arExit').onclick=()=>{const safety=setTimeout(()=>end(),1200);Promise.resolve(session.end()).catch(()=>{}).finally(()=>clearTimeout(safety))};
+  renderer.setAnimationLoop((t,frame)=>{
+    if(frame&&hitTestSource){const refSpace=renderer.xr.getReferenceSpace(),hits=frame.getHitTestResults(hitTestSource);
+      if(hits.length){reticle.visible=true;reticle.matrix.fromArray(hits[0].getPose(refSpace).transform.matrix)}else reticle.visible=false}
+    tex.needsUpdate=true;renderer.render(scene,camera)});
 }
-
-\$('arBtn').onclick = startAR;
+$('arBtn').onclick=startAR;
 })();
 </script></body></html>
