@@ -3,102 +3,83 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>AR SUSTAMA — Solución Definitiva</title>
+    <title>SUSTAMA AR — Test Oficial</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: transparent; font-family: monospace; }
-        #ar-overlay { position: fixed; inset: 0; z-index: 10; pointer-events: none; padding: 20px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; }
-        .ui-box { pointer-events: auto; background: rgba(0,0,0,0.8); color: #b5f23d; padding: 15px; border-radius: 10px; text-align: center; width: 80%; max-width: 300px; margin-bottom: 20px; border: 1px solid #b5f23d; }
-        button { background: #b5f23d; color: black; border: none; font-weight: bold; padding: 14px; border-radius: 8px; cursor: pointer; width: 100%; font-size: 16px; font-family: inherit; }
-        button:disabled { background: #333; color: #777; border: 1px solid #555; }
+        /* Estilo para el contenedor de interfaz HTML sobre la cámara */
+        #ar-overlay { position: fixed; inset: 0; z-index: 10; pointer-events: none; }
+        .ui-box { pointer-events: auto; position: absolute; bottom: 80px; left: 5%; width: 90%; background: rgba(0,0,0,0.8); color: #b5f23d; padding: 15px; border-radius: 10px; text-align: center; box-sizing: border-box; border: 1px solid #b5f23d; }
     </style>
-    <!-- Cargamos Three.js moderno -->
+    <!-- Cargamos Three.js (Librería Base) -->
     <script src="https://cloudflare.com"></script>
 </head>
 <body>
 
+    <!-- Capa de interfaz de usuario para el modo AR -->
     <div id="ar-overlay">
         <div class="ui-box">
-            <h3 style="margin: 0 0 10px 0; color: white;">SUSTAMA AR</h3>
-            <button id="ar-button" disabled>Comprobando XR...</button>
+            <h3 style="margin: 0 0 5px 0; color: white;">SUSTAMA AR</h3>
+            <p style="margin: 0; font-size: 12px; color: #aaa;">Usa el botón de abajo creado por Three.js para iniciar</p>
         </div>
     </div>
 
 <script>
-    const button = document.getElementById('ar-button');
-    let scene, camera, renderer, cube;
+    // Importamos dinámicamente el botón oficial de AR de Three.js para evitar crasheos de scripts estáticos
+    import('https://unpkg.com').then((module) => {
+        const ARButton = module.ARButton;
+        init(ARButton);
+    }).catch(err => {
+        document.body.innerHTML = `<div style="color:red; padding:20px;">Error cargando ARButton: ${err.message}</div>`;
+    });
 
-    // 1. Comprobación estricta de soporte (Igual al sample oficial)
-    if (navigator.xr) {
-        navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
-            if (supported) {
-                button.disabled = false;
-                button.textContent = "ENTRAR A RA";
-            } else {
-                button.textContent = "RA No Soportada";
-            }
-        });
-    } else {
-        button.textContent = "Sin WebXR en navegador";
-    }
+    function init(ARButton) {
+        // 1. Crear Escena y Cámara
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
-    // 2. Inicialización limpia de la Escena
-    function setupScene() {
-        scene = new THREE.Scene();
-        
-        // El FOV se auto-ajustará con la cámara física del celular al iniciar XR
-        camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
-
-        // CONFIGURACIÓN CLAVE: Inicializamos el renderer de la forma más plana y limpia posible
-        // Dejamos que WebXR tome el control total del canal Alpha y los buffers internos
-        renderer = new THREE.WebGLRenderer({ antialias: false }); 
+        // 2. Crear Renderer básico transparente
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.xr.enabled = true;
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.xr.enabled = true; // Habilitamos el puente XR interno de Three.js
         document.body.appendChild(renderer.domElement);
 
-        // Agregamos un cubo flotando a 50cm enfrente (Z = -0.5) para validar la escena
+        // 3. Agregar el botón oficializado por Google/W3C al DOM
+        // Configuramos la sesión pidiendo exactamente lo mismo que el sample exitoso
+        const arButtonElement = ARButton.createButton(renderer, {
+            requiredFeatures: [], 
+            optionalFeatures: ['dom-overlay'],
+            domOverlay: { root: document.getElementById('ar-overlay') }
+        });
+        document.body.appendChild(arButtonElement);
+
+        // 4. Objeto de prueba (Cubo rojo flotando enfrente a 50cm)
         const geometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
         const material = new THREE.MeshBasicMaterial({ color: 0xff5a3c });
-        cube = new THREE.Mesh(geometry, material);
+        const cube = new THREE.Mesh(geometry, material);
         cube.position.set(0, 0, -0.5); 
         scene.add(cube);
+
+        // Luz ambiental por defecto
+        const light = new THREE.AmbientLight(0xffffff, 1);
+        scene.add(light);
+
+        // 5. Bucle de Animación XR
+        renderer.setAnimationLoop(() => {
+            if (cube) {
+                cube.rotation.y += 0.02; // El cubo girará continuamente para validar que el render está vivo
+                cube.rotation.x += 0.01;
+            }
+            renderer.render(scene, camera);
+        });
+
+        // Ajuste dinámico si el celular cambia de orientación (horizontal/vertical)
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
     }
-
-    // 3. Activación de la sesión AR
-    async function startAR() {
-        setupScene();
-
-        try {
-            // Solicitamos la sesión exactamente con los parámetros del sample que te funcionó
-            const session = await navigator.xr.requestSession('immersive-ar', {
-                optionalFeatures: ['dom-overlay'],
-                domOverlay: { root: document.getElementById('ar-overlay') }
-            });
-
-            await renderer.xr.setSession(session);
-            
-            // Cambiamos el comportamiento del botón para que sirva para salir
-            button.textContent = "SALIR DE AR";
-            button.onclick = () => session.end();
-
-            // Ciclo de renderizado nativo gestionado por Three.js XR
-            renderer.setAnimationLoop(() => {
-                if (cube) {
-                    cube.rotation.y += 0.02; // Animación para verificar que el render corre fluido
-                }
-                renderer.render(scene, camera);
-            });
-
-            session.addEventListener('end', () => {
-                renderer.setAnimationLoop(null);
-                window.location.reload(); // Limpieza absoluta de contextos WebGL colgados
-            });
-
-        } catch (err) {
-            alert("Error al iniciar sesión AR: " + err.message);
-        }
-    }
-
-    button.onclick = startAR;
 </script>
 </body>
 </html>
