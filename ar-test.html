@@ -327,125 +327,152 @@ $('instBtn').onclick=async()=>{
 instUI();
 if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
 
-/* ===== AR (Safe 3D Software Spatial AR): 100% Stable & Dependedless ===== */
+/* ===== AR (Isolated 3D Spherical Projection): 100% Desanclado del Espacio 2D ===== */
 if (window.DeviceOrientationEvent) {
-  \$('arBtn').hidden = false;
+  $('arBtn').hidden = false;
 }
 
 let arActive = false;
 let cameraStream = null;
-let initialOrientation = null;
+let initialGyro = null;
+
+// Coordenadas espaciales de la mascota en el mundo real (en metros)
+// X = Horizontal, Y = Altura (Suelo aparente), Z = Distancia hacia el frente
+let petWorldPos = { x: 0, y: -0.4, z: -1.2 }; 
 
 async function startAR() {
-  const overlay = \$('arOverlay');
-  
-  if (!arActive) {
-    try {
-      // 1. Encendemos la cámara trasera nativa sin usar WebXR (Cero pantallas negras)
-      cameraStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { exact: "environment" } }
-      });
-      
-      let bgVideo = document.getElementById('ar-video-bg');
-      if (!bgVideo) {
-        bgVideo = document.createElement('video');
-        bgVideo.id = 'ar-video-bg';
-        bgVideo.style.cssText = 'position:fixed; inset:0; width:100vw; height:100vh; object-fit:cover; z-index:1; pointer-events:none;';
-        bgVideo.autoplay = true;
-        bgVideo.playsInline = true;
-        bgVideo.muted = true;
-        document.body.appendChild(bgVideo);
-      }
-      bgVideo.srcObject = cameraStream;
-      bgVideo.style.display = 'block';
+  if (arActive) return;
 
-      // 2. PARCHE DE TRANSPARENCIA: Forzamos a la caja central, el canvas y el fondo a ser transparentes
-      document.body.style.setProperty('--bg', 'transparent');
-      document.body.style.setProperty('--sf', 'transparent'); // Limpia el fondo blanco/oscuro de la caja central
-      \(('sw').style.background = 'transparent';\)('sw').style.border = 'none';
-      \(('cv').style.borderColor = 'transparent'; // Oculta el borde del cuadro del Tamagotchi\)('app').style.position = 'relative';
-      \(('app').style.zIndex = '10';              // Ocultamos el HUD temporalmente para ver la escena limpia de Realidad Aumentada\)('tabs').style.visibility = 'hidden';
-      document.querySelector('.hud').style.visibility = 'hidden';
-      document.querySelector('.tapHint').style.visibility = 'hidden';
-      \$('statchips').style.visibility = 'hidden';
-      
-      overlay.hidden = false;
-      
-      // 3. Inicializamos los sensores de movimiento
-      initialOrientation = null;
-      window.addEventListener('deviceorientation', handle3DSpatialMotion);
-      arActive = true;
-      
-      say(['¡Modo AR 3D iniciado! Mueve el teléfono para buscar la altura del suelo.'], '^');
-    } catch (err) {
-      alert("Para activar el AR, concede permisos a la cámara trasera.");
+  try {
+    // 1. Encendemos la cámara trasera nativa sin usar WebXR para evitar pantallas negras
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { exact: "environment" } }
+    });
+
+    let bgVideo = document.getElementById('ar-video-bg');
+    if (!bgVideo) {
+      bgVideo = document.createElement('video');
+      bgVideo.id = 'ar-video-bg';
+      bgVideo.style.cssText = 'position:fixed; inset:0; width:100vw; height:100vh; object-fit:cover; z-index:1; pointer-events:none;';
+      bgVideo.autoplay = true;
+      bgVideo.playsInline = true;
+      bgVideo.muted = true;
+      document.body.appendChild(bgVideo);
     }
+    bgVideo.srcObject = cameraStream;
+    bgVideo.style.display = 'block';
+
+    // 2. DESANCLAJE DE LA UI: Ocultamos tu aplicación 2D por completo para pausar su layout
+    $('app').style.display = 'none';
+
+    // 3. Activamos los contenedores de AR originales de tu repositorio
+    const arCanvas = $('arCanvas');
+    const arOverlay = $('arOverlay');
+    arCanvas.hidden = false;
+    arOverlay.hidden = false;
+
+    // 4. Inicializamos los sensores de movimiento
+    initialGyro = null;
+    window.addEventListener('deviceorientation', handleReal3DMotion);
+    arActive = true;
+
+    say(['Modo AR 3D Espacial: Camina o gira para ver al SUSTAMA anclado al entorno.'], '^');
+  } catch (err) {
+    alert("Para activar el modo espacial, concede permisos a la cámara trasera.");
+    endAR();
   }
 }
 
 function endAR() {
   arActive = false;
-  window.removeEventListener('deviceorientation', handle3DSpatialMotion);
-  
+  window.removeEventListener('deviceorientation', handleReal3DMotion);
+
   if (cameraStream) {
     cameraStream.getTracks().forEach(track => track.stop());
   }
   const bgVideo = document.getElementById('ar-video-bg');
   if (bgVideo) bgVideo.style.display = 'none';
-  
-  // RESTAURACIÓN TOTAL: Regresamos los estilos CSS originales exactos de tu tema
-  document.body.style.removeProperty('--bg');
-  document.body.style.removeProperty('--sf');
-  \(('sw').style.background = '';\)('sw').style.border = '';
-  \(('cv').style.borderColor = '';\)('tabs').style.visibility = 'visible';
-  document.querySelector('.hud').style.visibility = 'visible';
-  document.querySelector('.tapHint').style.visibility = 'visible';
-  \(('statchips').style.visibility = 'visible';\)('arOverlay').hidden = true;
-  
-  // Reseteamos las transformaciones de tu mascota
-  const cv = \$('cv');
-  cv.style.transform = '';
-  E.x = 64; 
+
+  // RESTAURACIÓN TOTAL: Tu app e interfaz 2D regresan al estado exacto previo
+  $('arCanvas').hidden = true;
+  $('arOverlay').hidden = true;
+  $('app').style.display = 'flex';
 }
 
-// 4. MATEMÁTICAS 3D NATIVAS (Anclaje al suelo, Profundidad y Billboard)
-function handle3DSpatialMotion(e) {
+// 5. MOTOR DE PROYECCIÓN TRIDIMENSIONAL (Matemática de Perspectiva Real)
+function handleReal3DMotion(e) {
   if (!arActive || e.alpha === null || e.beta === null || e.gamma === null) return;
+
+  if (initialGyro === null) {
+    initialGyro = { alpha: e.alpha, beta: e.beta, gamma: e.gamma };
+  }
+
+  // Calculamos las desviaciones reales del teléfono en radianes
+  let dAlpha = (e.alpha - initialGyro.alpha) * Math.PI / 180;
+  let dBeta = (e.beta - initialGyro.beta) * Math.PI / 180;
+  let dGamma = (e.gamma - initialGyro.gamma) * Math.PI / 180;
+
+  // Forzamos la normalización de ángulos para evitar saltos en giros de 360°
+  if (dAlpha > Math.PI) dAlpha -= 2 * Math.PI;
+  if (dAlpha < -Math.PI) dAlpha += 2 * Math.PI;
+
+  // Matriz de rotación simplificada de la cámara (Giroscopio del móvil)
+  // Calculamos dónde queda la mascota en relación a hacia dónde está apuntando la cámara física
+  let cosA = Math.cos(dAlpha), sinA = Math.sin(dAlpha);
+  let cosB = Math.cos(dBeta),  sinB = Math.sin(dBeta);
+
+  // Posición relativa rotada en el plano horizontal (X, Z)
+  let rx = petWorldPos.x * cosA - petWorldPos.z * sinA;
+  let rz = petWorldPos.x * sinA + petWorldPos.z * cosA;
+
+  // Posición relativa rotada en el plano vertical (Y, Z)
+  let ry = petWorldPos.y * cosB - rz * sinB;
+  let fz = petWorldPos.y * sinB + rz * cosB; // Distancia final real corregida hacia el objeto
+
+  // Renderizado en el Canvas de pantalla completa
+  const canvas = $('arCanvas');
+  const ctx = canvas.getContext('2d');
   
-  // Fijamos la posición inicial como el "punto cero" del mundo real
-  if (initialOrientation === null) {
-    initialOrientation = { alpha: e.alpha, beta: e.beta, gamma: e.gamma };
+  // Sincronizamos el tamaño del lienzo con la pantalla física del celular
+  if (canvas.width !== innerWidth || canvas.height !== innerHeight) {
+    canvas.width = innerWidth;
+    canvas.height = innerHeight;
   }
   
-  // Ángulo Horizontal (Giro en círculos)
-  let diffAlpha = e.alpha - initialOrientation.alpha;
-  if (diffAlpha > 180) diffAlpha -= 360;
-  if (diffAlpha < -180) diffAlpha += 360;
-  
-  // Ángulo Vertical (Mirar hacia el piso o el techo)
-  let diffBeta = e.beta - initialOrientation.beta;
-  
-  // Ángulo de Alabeo (Inclinación lateral del teléfono)
-  let diffGamma = e.gamma - initialOrientation.gamma;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Modificamos E.x para el desplazamiento horizontal dentro de tu bucle interno
-  E.x = 64 + (diffAlpha * 5.0); 
+  // Proyección de perspectiva (Fórmula estándar de rendering 3D a pantalla 2D)
+  // Si fz es negativo, significa que el objeto quedó a tus espaldas (no se dibuja)
+  if (fz < -0.1) {
+    // Distancia focal simulada basada en el campo de visión de la cámara trasera
+    const fov = Math.min(canvas.width, canvas.height) * 0.8; 
+    
+    // Convertimos las coordenadas métricas 3D a píxeles de pantalla centrados
+    const screenX = (canvas.width / 2) + (rx * fov / -fz);
+    const screenY = (canvas.height / 2) - (ry * fov / -fz);
+    
+    // Tamaño dinámico del sprite: decrece de forma realista si te alejas (Profundidad 3D real)
+    const scale = (0.25 * fov) / -fz; 
 
-  // Efecto de Profundidad 3D (Simular que está apoyado en el suelo):
-  // Al inclinar el teléfono hacia abajo (mirando al piso), la perspectiva cambia:
-  // Calculamos una escala y una altura vertical artificiales basadas en la inclinación real.
-  const distanceFactor = Math.max(0.5, 1.0 - (diffBeta * 0.015)); // Simula alejamiento/acercamiento
-  const verticalTranslation = diffBeta * 6.5; // Desplazamiento vertical en píxeles hacia el suelo aparente
-
-  // Aplicamos transformaciones CSS directamente sobre tu lienzo de dibujo de la mascota
-  // Rotamos en el eje Z inverso al alabeo del teléfono para lograr el efecto Billboard (siempre derecho ante ti)
-  const cv = \$('cv');
-  cv.style.transform = `translateY(${verticalTranslation}px) scale(${distanceFactor}) rotate(${-diffGamma}deg)`;
+    if (screenX + scale > 0 && screenX - scale < canvas.width && screenY + scale > 0 && screenY - scale < canvas.height) {
+      ctx.save();
+      
+      // Trasladamos el origen al centro proyectado del sprite
+      ctx.translate(screenX, screenY);
+      
+      // MECÁNICA BILLBOARD Z-ALIGN: Rota el plano de forma inversa a la inclinación lateral del móvil
+      ctx.rotate(-dGamma);
+      
+      // Dibujamos tu Tamagotchi activo extrayendo la imagen exacta de tu lienzo original en vivo
+      ctx.imageSmoothingEnabled = false; // Mantiene los bordes de pixel-art limpios y nítidos
+      ctx.drawImage($('cv'), -scale / 2, -scale / 2, scale, scale);
+      
+      ctx.restore();
+    }
+  }
 }
 
-\$('arBtn').onclick = startAR;
-\$('arExit').onclick = endAR;
-
-
+$('arBtn').onclick = startAR;
+$('arExit').onclick = endAR;
 })();
 </script></body></html>
