@@ -173,6 +173,7 @@ async function startAR(){
         reticle.visible = false;
       }
     }
+    renderer.clear(); // Fuerza el borrado con el canal Alpha configurado en 0
     renderer.render(scene, camera);
   });
 }
